@@ -1,0 +1,363 @@
+import type { ClientMessage, MouseButton } from "@whipdesk/protocol";
+import type { ControllerTransport } from "./core";
+import type { ScreenView } from "./screen";
+
+/**
+ * Interaction model selected by the UI tabs:
+ *  - "viewer": look around safely. One finger drags the POINTER (shows the ring) but never
+ *    clicks; you click with the explicit Click button. With drag-to-scroll on, one finger
+ *    scrolls instead. Two fingers: pinch to zoom, drag to pan/scroll.
+ *  - "mouse": trackpad-style. Tap = click where you touch; drag = move the pointer; the
+ *    Right/Double/Drag-hold buttons and long-press = right click cover the rest.
+ *  - "touch": touchscreen simulation. Tap = tap (click) where you touch; swipe = scroll.
+ *    No right click — it mimics a finger on a touch screen.
+ */
+export type Interaction = "viewer" | "mouse" | "touch";
+
+function clamp01(n: number): number {
+  return n < 0 ? 0 : n > 1 ? 1 : n;
+}
+
+/** Pixels of finger drag per wheel tick (smaller = faster scrolling). */
+const DRAG_SCROLL_DIVISOR = 2.5;
+
+interface Pointer {
+  x: number;
+  y: number;
+  startX: number;
+  startY: number;
+  startT: number;
+  moved: boolean;
+  consumed: boolean;
+}
+
+const TAP_MS = 250;
+const LONG_PRESS_MS = 500;
+const MOVE_THRESHOLD = 8; // css px
+
+export interface InputCallbacks {
+  /** Cursor moved (normalized). Lets the UI mirror position if needed. */
+  onCursor?(nx: number, ny: number): void;
+  /** Live zoom changed via pinch (so the UI can refresh its zoom label). */
+  onZoom?(zoom: number): void;
+}
+
+/**
+ * Translates touch/pointer gestures into protocol input messages. The active `Interaction`
+ * decides how one finger behaves; two-finger gestures (pan/scroll/pinch) are shared.
+ * A virtual cursor is always maintained so the on-screen buttons (Click/Right/Double) act
+ * at a known location regardless of mode.
+ */
+export class InputController {
+  private interaction: Interaction = "viewer";
+  private dragLock = false; // hold the left button during drags (mouse mode)
+  private dragScroll = false; // one-finger drag scrolls instead of moving the pointer
+  private pan = false; // one-finger drag pans the zoomed view (viewer only), like a minimap
+  private holdingLeft = false;
+  private cursor = { nx: 0.5, ny: 0.5 };
+
+  private readonly pointers = new Map<number, Pointer>();
+  private longPressTimer = 0;
+  private twoFinger: { dist: number; mx: number; my: number; start: number; moved: boolean } | null = null;
+  private suppressTap = false;
+
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    private readonly view: ScreenView,
+    private readonly conn: ControllerTransport,
+    private cb: InputCallbacks = {},
+  ) {
+    canvas.style.touchAction = "none";
+    canvas.addEventListener("pointerdown", (e) => this.onDown(e));
+    canvas.addEventListener("pointermove", (e) => this.onMove(e));
+    canvas.addEventListener("pointerup", (e) => this.onUp(e));
+    canvas.addEventListener("pointercancel", (e) => this.onUp(e));
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    this.view.setCursor(this.cursor.nx, this.cursor.ny);
+  }
+
+  // ---- public control surface (wired to the ribbon buttons) ----
+  setInteraction(kind: Interaction): void {
+    this.interaction = kind;
+    if (kind === "viewer") this.dragLock = false;
+  }
+  getInteraction(): Interaction {
+    return this.interaction;
+  }
+  setCallbacks(cb: InputCallbacks): void {
+    this.cb = cb;
+  }
+  setDragLock(on: boolean): void {
+    this.dragLock = on;
+  }
+  getDragLock(): boolean {
+    return this.dragLock;
+  }
+  setDragScroll(on: boolean): void {
+    this.dragScroll = on;
+    if (on) this.pan = false; // the two one-finger drag behaviors are mutually exclusive
+  }
+  getDragScroll(): boolean {
+    return this.dragScroll;
+  }
+  /** One-finger drag pans the zoomed picture (viewer only), like dragging a strategy minimap. */
+  setPan(on: boolean): void {
+    this.pan = on;
+    if (on) this.dragScroll = false;
+  }
+  getPan(): boolean {
+    return this.pan;
+  }
+  private isPanning(): boolean {
+    return this.pan && this.interaction === "viewer";
+  }
+  /** Explicit click at the current virtual cursor (Click / Right buttons). */
+  click(button: MouseButton, double = false): void {
+    this.send({ type: "pointer", action: "click", button, double, x: this.cursor.nx, y: this.cursor.ny });
+    navigator.vibrate?.(15);
+  }
+  /** Rapid N-click at the cursor (2 = double, 3 = triple/select-all in browsers). */
+  multiClick(count: number): void {
+    for (let i = 0; i < count; i++) {
+      this.send({ type: "pointer", action: "click", button: "left", x: this.cursor.nx, y: this.cursor.ny });
+    }
+    navigator.vibrate?.(15);
+  }
+  /** Touch-style long press: press and hold at the cursor, then release. */
+  longPress(holdMs = 650): void {
+    this.send({ type: "pointer", action: "down", button: "left", x: this.cursor.nx, y: this.cursor.ny });
+    navigator.vibrate?.(25);
+    window.setTimeout(() => this.send({ type: "pointer", action: "up", button: "left" }), holdMs);
+  }
+  /** Touch-style swipe/flick from the cursor by a normalized delta (press → move → release). */
+  swipe(dnx: number, dny: number): void {
+    const sx = clamp01(this.cursor.nx);
+    const sy = clamp01(this.cursor.ny);
+    const ex = clamp01(this.cursor.nx + dnx);
+    const ey = clamp01(this.cursor.ny + dny);
+    this.send({ type: "pointer", action: "down", button: "left", x: sx, y: sy });
+    const steps = 6;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      window.setTimeout(() => {
+        this.send({ type: "pointer", action: "move", x: sx + (ex - sx) * t, y: sy + (ey - sy) * t });
+        if (i === steps) {
+          this.moveCursor(ex, ey);
+          this.send({ type: "pointer", action: "up", button: "left" });
+        }
+      }, i * 16);
+    }
+    navigator.vibrate?.(15);
+  }
+  /** Discrete scroll step from the Scroll ▲▼ buttons. */
+  scrollStep(dy: number): void {
+    this.send({ type: "scroll", dx: 0, dy });
+  }
+
+  // ---- internals ----
+  private send(message: ClientMessage): void {
+    this.conn.send(message);
+  }
+
+  private positionOf(e: PointerEvent): { x: number; y: number } {
+    const rect = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  private moveCursor(nx: number, ny: number): void {
+    this.cursor.nx = clamp01(nx);
+    this.cursor.ny = clamp01(ny);
+    this.view.setCursor(this.cursor.nx, this.cursor.ny);
+    this.cb.onCursor?.(this.cursor.nx, this.cursor.ny);
+  }
+
+  private onDown(e: PointerEvent): void {
+    this.canvas.setPointerCapture?.(e.pointerId);
+    const p = this.positionOf(e);
+    this.pointers.set(e.pointerId, {
+      x: p.x,
+      y: p.y,
+      startX: p.x,
+      startY: p.y,
+      startT: performance.now(),
+      moved: false,
+      consumed: false,
+    });
+
+    if (this.pointers.size === 2) {
+      window.clearTimeout(this.longPressTimer);
+      this.beginTwoFinger();
+      return;
+    }
+    if (this.pointers.size === 1) {
+      // First finger down = a pan/zoom gesture may be starting. Defer host re-crops until it ends.
+      this.view.beginViewGesture();
+      window.clearTimeout(this.longPressTimer);
+      // Long-press = right click only in Mouse mode (Touch has no right click).
+      if (this.interaction === "mouse" && !this.dragScroll) {
+        this.longPressTimer = window.setTimeout(() => this.onLongPress(), LONG_PRESS_MS);
+      }
+      // Absolute modes snap the pointer to the touch point (unless we're drag-scrolling/panning).
+      if (!this.dragScroll && !this.isPanning() && (this.interaction === "mouse" || this.interaction === "viewer")) {
+        const n = this.view.canvasToNorm(p.x, p.y);
+        this.moveCursor(n.nx, n.ny);
+      }
+    }
+  }
+
+  private onLongPress(): void {
+    const only = [...this.pointers.values()][0];
+    if (!only || only.moved || only.consumed) return;
+    only.consumed = true;
+    this.send({ type: "pointer", action: "click", button: "right", x: this.cursor.nx, y: this.cursor.ny });
+    navigator.vibrate?.(20);
+  }
+
+  private beginTwoFinger(): void {
+    const pts = [...this.pointers.values()];
+    if (pts.length < 2) return;
+    const a = pts[0]!;
+    const b = pts[1]!;
+    this.twoFinger = {
+      dist: Math.hypot(a.x - b.x, a.y - b.y),
+      mx: (a.x + b.x) / 2,
+      my: (a.y + b.y) / 2,
+      start: performance.now(),
+      moved: false,
+    };
+  }
+
+  private onMove(e: PointerEvent): void {
+    const ptr = this.pointers.get(e.pointerId);
+    if (!ptr) return;
+    const p = this.positionOf(e);
+    const prevX = ptr.x;
+    const prevY = ptr.y;
+    ptr.x = p.x;
+    ptr.y = p.y;
+    if (Math.hypot(p.x - ptr.startX, p.y - ptr.startY) > MOVE_THRESHOLD) ptr.moved = true;
+
+    if (this.pointers.size >= 2 && this.twoFinger) {
+      this.onTwoFingerMove();
+      return;
+    }
+    if (this.pointers.size !== 1 || ptr.consumed || !ptr.moved) return;
+
+    window.clearTimeout(this.longPressTimer);
+    const dx = p.x - prevX;
+    const dy = p.y - prevY;
+
+    // One-finger PAN (viewer): drag the zoomed picture under the finger, no host effect.
+    if (this.isPanning()) {
+      this.view.panByCanvasPixels(dx, dy);
+      return;
+    }
+
+    // One-finger scroll: Touch mode always, or any mode with drag-to-scroll enabled.
+    // Natural direction: swipe up -> content scrolls up (wheel down).
+    if (this.interaction === "touch" || this.dragScroll) {
+      this.send({
+        type: "scroll",
+        dx: Math.round(-dx / DRAG_SCROLL_DIVISOR),
+        dy: Math.round(-dy / DRAG_SCROLL_DIVISOR),
+      });
+      return;
+    }
+
+    // viewer + mouse: absolute — the pointer tracks the finger.
+    const n = this.view.canvasToNorm(p.x, p.y);
+    this.moveCursor(n.nx, n.ny);
+
+    // Drag-hold (mouse mode): keep the left button down through the drag.
+    if (this.interaction === "mouse" && this.dragLock && !this.holdingLeft) {
+      this.holdingLeft = true;
+      this.send({ type: "pointer", action: "down", button: "left", x: this.cursor.nx, y: this.cursor.ny });
+    }
+    this.send({ type: "pointer", action: "move", x: this.cursor.nx, y: this.cursor.ny });
+  }
+
+  private onTwoFingerMove(): void {
+    const pts = [...this.pointers.values()];
+    if (pts.length < 2 || !this.twoFinger) return;
+    const a = pts[0]!;
+    const b = pts[1]!;
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    const dDist = dist - this.twoFinger.dist;
+    const dmx = mx - this.twoFinger.mx;
+    const dmy = my - this.twoFinger.my;
+
+    if (Math.abs(dDist) > 6) {
+      this.twoFinger.moved = true;
+      // Zoom around the midpoint between the fingers (not the screen center).
+      this.view.zoomAround(1 + dDist / 200, mx, my);
+      this.twoFinger.dist = dist;
+      return;
+    }
+    if (Math.abs(dmy) > 2 || Math.abs(dmx) > 2) {
+      this.twoFinger.moved = true;
+      // When zoomed in, two-finger drag pans the picture 1:1 with the fingers (fast + smooth
+      // at any zoom); when not zoomed, it scrolls the host.
+      if (this.view.getZoom() > 1) {
+        this.view.panByCanvasPixels(dmx, dmy);
+      } else {
+        this.send({
+          type: "scroll",
+          dx: Math.round(-dmx / DRAG_SCROLL_DIVISOR),
+          dy: Math.round(-dmy / DRAG_SCROLL_DIVISOR),
+        });
+      }
+      this.twoFinger.mx = mx;
+      this.twoFinger.my = my;
+    }
+  }
+
+  private onUp(e: PointerEvent): void {
+    const sizeBefore = this.pointers.size;
+    const ptr = this.pointers.get(e.pointerId);
+    this.pointers.delete(e.pointerId);
+    window.clearTimeout(this.longPressTimer);
+
+    // The pan/zoom gesture is over once the LAST finger lifts — now ask the host to re-crop, once.
+    if (this.pointers.size === 0) this.view.endViewGesture();
+
+    // Releasing the first of two fingers: a two-finger tap = right click (Mouse mode only).
+    if (sizeBefore === 2) {
+      const tf = this.twoFinger;
+      if (tf && !tf.moved && this.interaction === "mouse" && performance.now() - tf.start < TAP_MS) {
+        this.send({ type: "pointer", action: "click", button: "right", x: this.cursor.nx, y: this.cursor.ny });
+        navigator.vibrate?.(20);
+      }
+      this.twoFinger = null;
+      this.suppressTap = true; // the remaining finger's lift must not click
+      for (const remaining of this.pointers.values()) remaining.consumed = true;
+      return;
+    }
+
+    if (this.holdingLeft && this.pointers.size === 0) {
+      this.holdingLeft = false;
+      this.send({ type: "pointer", action: "up", button: "left" });
+    }
+    if (this.pointers.size < 2) this.twoFinger = null;
+
+    if (!ptr || ptr.consumed) return;
+    if (this.suppressTap) {
+      if (this.pointers.size === 0) this.suppressTap = false;
+      return;
+    }
+
+    const duration = performance.now() - ptr.startT;
+    const wasTap = !ptr.moved && duration < TAP_MS && this.pointers.size === 0;
+    if (!wasTap || this.dragScroll) return;
+
+    // Tap = click at the touched point in Mouse and Touch modes. Viewer never taps-to-click.
+    if (this.interaction === "mouse" || this.interaction === "touch") {
+      const n = this.view.canvasToNorm(ptr.startX, ptr.startY);
+      this.moveCursor(n.nx, n.ny);
+      this.send({ type: "pointer", action: "click", button: "left", x: n.nx, y: n.ny });
+      navigator.vibrate?.(12);
+    }
+    // viewer: tap positioned the pointer in onDown; click with the Click button.
+  }
+}

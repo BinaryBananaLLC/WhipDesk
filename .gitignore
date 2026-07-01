@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Local runtime state (token, pairing data) — never commit
+.whipdesk/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+serviceAccount*.json
+firebase-config.local.*
+
+.firebaserc
+firebase.json
+firestore.rules
+firestore.indexes.json
+database.rules.json
+.firebase/
+
+# Logs
+*.log
+logs/
+
+# Editor / OS
+.DS_Store
+.vite/
+coverage/
+*.local

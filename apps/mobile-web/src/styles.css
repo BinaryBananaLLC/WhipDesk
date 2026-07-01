@@ -1,0 +1,1474 @@
+/* Light is the default; dark only when the device prefers it (see media query below). */
+:root {
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --panel-2: #eef1f5;
+  --border: #d6dce4;
+  --text: #1a2330;
+  --muted: #5f6b7a;
+  --accent: #2f6fed;
+  --accent-2: #1aa66b;
+  --warn: #c77700;
+  --error: #d83b3b;
+  --shadow: rgba(20, 30, 50, 0.16);
+  --screen-bg: #1b2027;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0e14;
+    --panel: #151a23;
+    --panel-2: #1d2430;
+    --border: #2a3342;
+    --text: #e6edf3;
+    --muted: #8b98a9;
+    --accent: #4ea1ff;
+    --accent-2: #36d399;
+    --warn: #f5a623;
+    --error: #ff5c5c;
+    --shadow: rgba(0, 0, 0, 0.5);
+    --screen-bg: #000000;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  overscroll-behavior: none;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* …but real text fields stay selectable (prompt box, PIN). */
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Screen surface fills the viewport; the toolbar floats above it. */
+.wd-screen {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: var(--screen-bg);
+  touch-action: none;
+}
+
+/* status bar — a compact solid chip that auto-collapses to its dot a few seconds after
+   connecting, so it stops covering the screen. Tapping it reveals the text again. */
+.wd-statusbar {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  left: 8px;
+  max-width: calc(100% - 64px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  min-height: 38px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 10px var(--shadow);
+  font-size: 12px;
+  z-index: 5;
+  cursor: pointer;
+  transition: max-width 0.25s ease, padding 0.25s ease;
+}
+.wd-statusbar.collapsed {
+  max-width: 124px;
+  padding: 6px 8px;
+  overflow: hidden;
+}
+.wd-statusbar.collapsed .wd-status-text,
+.wd-statusbar.collapsed .wd-watchers {
+  display: none;
+}
+.wd-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+.wd-dot[data-status="connected"] {
+  background: var(--accent-2);
+}
+.wd-dot[data-status="connecting"] {
+  background: var(--warn);
+}
+.wd-dot[data-status="disconnected"] {
+  background: var(--error);
+}
+.wd-status-text {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wd-watchers {
+  color: var(--warn);
+  font-weight: 700;
+  flex: none;
+  white-space: nowrap;
+}
+/* transport badge (LAN / Direct / STUN / TURN) shown next to the status dot */
+.wd-transport {
+  flex: none;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: #fff;
+  background: var(--accent-2);
+  text-transform: uppercase;
+}
+.wd-transport.hidden {
+  display: none;
+}
+.wd-transport[data-kind="turn"] {
+  background: #e0a800;
+  color: #111;
+}
+.wd-transport[data-kind="stun"],
+.wd-transport[data-kind="direct"] {
+  background: var(--accent-2);
+}
+.wd-transport[data-kind="lan"] {
+  background: #3b82f6;
+}
+/* alerts bell — a standalone button pinned to the top-right corner, with a count badge */
+.wd-bell {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  right: 8px;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 2px 10px var(--shadow);
+  cursor: pointer;
+}
+.wd-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 1px 4px var(--shadow);
+}
+
+/* ribbon (bottom, collapsible) — solid panel, no vignette over the screen */
+.wd-ribbon {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 16px var(--shadow);
+}
+.wd-panel {
+  display: flex;
+  flex-direction: column;
+}
+.wd-options {
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.wd-pane {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.wd-pane-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+/* Viewer is ONE row, period. Both the pane and the group item-rows are nowrap, so no button —
+   including the ones inside Zoom/Scroll — can ever drop to a second line. Sizes are mobile-first
+   (compact enough to fit ~320px) and grow on wider screens. min-width:0 lets groups shrink so the
+   row stays on a single line; overflow-x is only a last-ditch safety net (hidden scrollbar). */
+.wd-pane-single-row {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  justify-content: center;
+  align-items: stretch;
+  gap: 4px;
+  scrollbar-width: none;
+}
+.wd-pane-single-row::-webkit-scrollbar {
+  display: none;
+}
+.wd-pane-single-row .wd-group {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 3px 4px;
+  gap: 2px;
+}
+.wd-pane-single-row .wd-group-items {
+  flex-wrap: nowrap;
+  gap: 3px;
+}
+.wd-pane-single-row .wd-btn {
+  min-width: 0;
+}
+.wd-pane-single-row .wd-btn.wd-icon-only {
+  min-width: 30px;
+  padding: 4px;
+}
+.wd-pane-single-row .wd-btn.wd-icon-only svg {
+  width: 18px;
+  height: 18px;
+}
+.wd-pane-single-row .wd-btn.wd-go {
+  padding: 6px 9px;
+  font-size: 12px;
+  gap: 4px;
+}
+
+/* Roomier on normal-width phones. */
+@media (min-width: 390px) {
+  .wd-pane-single-row {
+    gap: 5px;
+  }
+  .wd-pane-single-row .wd-group {
+    padding: 3px 6px;
+  }
+  .wd-pane-single-row .wd-btn.wd-icon-only {
+    min-width: 36px;
+    padding: 5px;
+  }
+  .wd-pane-single-row .wd-btn.wd-icon-only svg {
+    width: 20px;
+    height: 20px;
+  }
+  .wd-pane-single-row .wd-btn.wd-go {
+    padding: 7px 12px;
+    font-size: 13px;
+  }
+}
+
+/* Full-size on tablets / landscape. */
+@media (min-width: 560px) {
+  .wd-pane-single-row .wd-btn.wd-icon-only {
+    min-width: 42px;
+    padding: 6px;
+  }
+  .wd-pane-single-row .wd-btn.wd-go {
+    padding: 8px 16px;
+  }
+}
+
+/* Big screens (desktop / large tablet): the touch-sized mobile UI is oversized with a mouse.
+   Shrink the controls and float the ribbon as a centered bar so the desktop view gets more room. */
+@media (min-width: 820px) {
+  .wd-ribbon {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(880px, 94vw);
+    bottom: 16px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 10px 34px var(--shadow);
+    padding-bottom: 0;
+  }
+  .wd-options {
+    padding: 5px 6px;
+  }
+  .wd-btn {
+    min-height: 32px;
+    font-size: 12px;
+  }
+  .wd-pane-single-row .wd-btn.wd-icon-only {
+    min-width: 32px;
+    padding: 4px;
+  }
+  .wd-pane-single-row .wd-btn.wd-icon-only svg {
+    width: 17px;
+    height: 17px;
+  }
+  .wd-pane-single-row .wd-btn.wd-go {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  .wd-group {
+    padding: 3px 6px;
+  }
+  .wd-bell {
+    min-width: 32px;
+    min-height: 32px;
+  }
+  .wd-statusbar {
+    min-height: 32px;
+  }
+}
+
+/* labeled, wrapping control groups (Zoom / Scroll / Mouse / Touch …) */
+.wd-group {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+.wd-group-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  text-align: center;
+}
+.wd-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.wd-mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.wd-mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+.wd-mode-btn.on {
+  background: var(--accent);
+  color: #fff;
+}
+.wd-group-items {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+}
+.wd-wrap {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.wd-btn-label {
+  line-height: 1;
+}
+.wd-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.wd-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 5px 6px;
+  align-items: center;
+}
+.wd-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 6px 4px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.wd-tab .wd-tab-label {
+  line-height: 1;
+}
+.wd-tab.on {
+  background: var(--panel-2);
+  color: var(--accent);
+  border-color: var(--border);
+}
+.wd-collapse {
+  flex: none;
+  min-width: 44px;
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* buttons */
+.wd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  white-space: nowrap;
+}
+.wd-btn svg {
+  flex: none;
+}
+.wd-btn.wd-icon-only {
+  padding: 6px;
+  min-width: 40px;
+}
+.wd-btn:active {
+  background: var(--panel-2);
+  transform: translateY(1px);
+}
+.wd-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.wd-btn.wd-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+/* "Go" action button — green so it reads as an action, never as a selected/toggled state. */
+.wd-btn.wd-go {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: #fff;
+  padding: 8px 14px;
+}
+.wd-btn.wd-go:active {
+  filter: brightness(0.92);
+  transform: translateY(1px);
+}
+
+/* segmented mouse/touch */
+.wd-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.wd-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 18px;
+  border: none;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.wd-seg-btn.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+.wd-zoom {
+  min-width: 52px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-weight: 600;
+}
+.wd-hint {
+  flex-basis: 100%;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* type pane */
+.wd-type-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 46px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 16px; /* >=16px stops iOS zoom-on-focus */
+  font-family: inherit;
+}
+.wd-keys-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.wd-type-actions {
+  display: flex;
+  gap: 6px;
+}
+.wd-type-actions .wd-btn {
+  flex: 1;
+}
+
+/* monitor pane */
+.wd-monitor-list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* toasts */
+.wd-toasts {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 36px);
+  left: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9;
+  pointer-events: none;
+}
+.wd-toast {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.wd-toast strong {
+  font-size: 14px;
+}
+.wd-toast span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.wd-toast.wd-success {
+  border-left-color: var(--accent-2);
+}
+.wd-toast.wd-warning {
+  border-left-color: var(--warn);
+}
+.wd-toast.wd-error {
+  border-left-color: var(--error);
+}
+.wd-toast.wd-info {
+  border-left-color: var(--accent);
+}
+.wd-toast.wd-hide {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* PIN unlock overlay */
+.wd-pin-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 9, 14, 0.92);
+  backdrop-filter: blur(6px);
+  padding: 20px;
+}
+.wd-pin-card {
+  width: 100%;
+  max-width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.wd-pin-whip {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 12px;
+}
+.wd-pin-card h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+.wd-pin-msg {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.wd-pin-msg.err {
+  color: var(--error);
+}
+.wd-pin-input {
+  width: 100%;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 22px;
+  text-align: center;
+  letter-spacing: 6px;
+  margin-bottom: 14px;
+}
+.wd-pin-submit {
+  width: 100%;
+  min-height: 50px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.wd-pin-submit:active {
+  filter: brightness(0.92);
+  transform: translateY(1px);
+}
+.wd-pin-back {
+  display: block;
+  margin: 14px auto 0;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wd-pin-back:active {
+  color: var(--text);
+}
+
+/* "connecting…" overlay (first connect only) */
+.wd-connecting {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 9, 14, 0.92);
+  backdrop-filter: blur(6px);
+  padding: 20px;
+}
+.wd-connecting-card {
+  width: 100%;
+  max-width: 320px;
+  text-align: center;
+}
+.wd-connecting-whip {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 18px;
+  /* Pivot from the bottom-left corner so the whip visibly swings like it's being cracked.
+     (A tiny ±4° bob made transform-origin look like it did nothing — the swing now reads.) */
+  transform-origin: left bottom;
+  animation: wd-whip-crack 1.4s ease-in-out infinite;
+}
+.wd-connecting-spinner {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto 16px;
+  border: 3px solid rgba(255, 255, 255, 0.22);
+  border-top-color: #4ea1ff;
+  border-radius: 50%;
+  animation: wd-spin 0.8s linear infinite;
+}
+.wd-connecting-msg {
+  margin: 0;
+  color: #eef2f7;
+  font-size: 15px;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+@keyframes wd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes wd-whip-crack {
+  0%,
+  100% {
+    transform: rotate(-16deg);
+  }
+  40% {
+    transform: rotate(14deg);
+  }
+  55% {
+    transform: rotate(5deg);
+  }
+  70% {
+    transform: rotate(11deg);
+  }
+}
+
+/* change-alerts dialog */
+.wd-dialog-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 9, 14, 0.6);
+  backdrop-filter: blur(4px);
+  padding: 16px;
+}
+.wd-dialog {
+  width: 100%;
+  max-width: 380px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+}
+.wd-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.wd-dialog-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.wd-dialog-x {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.wd-dialog-help {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 8px 0 12px;
+}
+.wd-help-intro {
+  margin: 0 0 6px;
+}
+.wd-help-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.wd-help-list strong {
+  color: var(--text);
+}
+.wd-help-note {
+  margin: 0;
+  font-style: italic;
+}
+.wd-watch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.wd-watch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.wd-watch-name {
+  flex: 1;
+  font-weight: 600;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.wd-watch-name:active {
+  color: var(--accent);
+}
+/* timer rows in the Alerts dialog */
+.wd-timer-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.wd-timer-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+.wd-timer-name svg {
+  flex: none;
+  color: var(--accent);
+}
+.wd-timer-remain {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.wd-timer-tag {
+  flex: none;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--accent);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+/* timer-creation form */
+.wd-dialog-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.wd-dialog-actions .wd-btn {
+  flex: 1;
+  justify-content: center;
+}
+/* vertical action stack (the three Auto-Whip types) */
+.wd-dialog-actions.wd-actions-stack {
+  flex-direction: column;
+}
+.wd-actions-stack .wd-btn {
+  width: 100%;
+}
+/* session-monitoring state badge */
+.wd-mon-state {
+  flex: none;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--muted);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.wd-mon-state[data-state="working"] {
+  background: var(--accent-2);
+}
+.wd-mon-state[data-state="blocked"] {
+  background: var(--warn);
+}
+.wd-mon-state[data-state="finished"] {
+  background: var(--accent);
+}
+.wd-mon-state[data-state="crashed"] {
+  background: var(--error);
+}
+/* running-session picker (Add Session Monitoring) */
+.wd-mon-pick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.wd-mon-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+.wd-mon-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.wd-mon-item.on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.wd-mon-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.wd-mon-item-main svg {
+  flex: none;
+  color: var(--accent);
+}
+.wd-mon-item-title {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wd-mon-events {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.wd-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.wd-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.wd-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+.wd-form-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.wd-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+}
+.wd-input-area {
+  min-height: 64px;
+  resize: vertical;
+}
+.wd-form-duration {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.wd-input-num {
+  width: 56px;
+  text-align: center;
+}
+.wd-form-unit {
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.wd-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.wd-preset {
+  flex: 1 1 auto;
+  min-width: 48px;
+  padding: 9px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+.wd-preset:active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.wd-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.wd-step-btn {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.wd-step-btn:active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.wd-form-target {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.wd-form-target-status {
+  font-size: 13px;
+  color: var(--muted);
+}
+.wd-form-target-status.set {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+/* "tap a spot" banner shown while picking a timer-action target */
+.wd-pick-banner {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 56px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px var(--shadow);
+  pointer-events: none;
+  text-align: center;
+  max-width: 90%;
+}
+/* connection dialog (opened from the status pill) */
+.wd-conn-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.wd-conn-label {
+  flex: none;
+  width: 92px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  padding-top: 2px;
+}
+.wd-conn-value {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+.wd-conn-route {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wd-conn-route .wd-transport {
+  align-self: flex-start;
+  position: static;
+}
+.wd-conn-desc {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+/* live connection status (connected / connecting / disconnected) inside the dialog */
+.wd-conn-status {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wd-conn-error {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: rgba(220, 53, 69, 0.12);
+  border: 1px solid var(--error);
+  color: var(--error);
+  font-size: 12.5px;
+  font-weight: 600;
+  word-break: break-word;
+}
+.wd-disconnect {
+  width: 100%;
+  justify-content: center;
+  margin-top: 14px;
+  background: var(--error);
+  color: #fff;
+  border-color: transparent;
+  min-height: 46px;
+  font-size: 15px;
+  font-weight: 700;
+}
+/* Small, contextual "Support WhipDesk" button — a subtle pill, not a full-width CTA. Used in the
+   connection dialog (relay notice) and under the PIN prompt's Unlock button. */
+.wd-support-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.wd-support-link:hover,
+.wd-support-link:active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.wd-support-link svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+/* Feedback footer in the connection dialog — one short line + Reddit / GitHub buttons. */
+.wd-conn-feedback {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+.wd-conn-feedback-text {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.wd-conn-feedback-links {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 9px;
+}
+.wd-conn-feedback-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 16px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.wd-conn-feedback-link:hover,
+.wd-conn-feedback-link:active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.wd-conn-feedback-link svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+/* In the PIN card (text-align:center, not flex) it should sit centered between Unlock and Back. */
+.wd-pin-support {
+  margin-top: 16px;
+}
+/* timer-action placement mode: navigable live screen + draggable crosshair + bottom bar */
+/* in placement mode, hide the ribbon + status UI so they don't peek behind the placement bar */
+.wd-placing .wd-ribbon,
+.wd-placing .wd-statusbar,
+.wd-placing .wd-bell {
+  display: none;
+}
+.wd-place-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  touch-action: none;
+  background: transparent;
+}
+.wd-place-marker {
+  position: absolute;
+  z-index: 41;
+  width: 46px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #4ea1ff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5), 0 0 14px rgba(78, 161, 255, 0.7);
+  pointer-events: none;
+}
+.wd-place-marker::before,
+.wd-place-marker::after {
+  content: "";
+  position: absolute;
+  background: #4ea1ff;
+}
+.wd-place-marker::before {
+  left: 50%;
+  top: -8px;
+  bottom: -8px;
+  width: 2px;
+  transform: translateX(-50%);
+}
+.wd-place-marker::after {
+  top: 50%;
+  left: -8px;
+  right: -8px;
+  height: 2px;
+  transform: translateY(-50%);
+}
+.wd-place-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 42;
+  padding: 12px 14px calc(env(safe-area-inset-bottom, 0px) + 12px);
+  background: rgba(10, 14, 20, 0.94);
+  backdrop-filter: blur(6px);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wd-place-hint {
+  margin: 0;
+  color: #eef2f7;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+.wd-place-text {
+  width: 100%;
+}
+.wd-place-buttons {
+  display: flex;
+  gap: 8px;
+}
+.wd-place-buttons .wd-btn {
+  flex: 1;
+  justify-content: center;
+}
+/* browser-notification permission status row inside the Alerts dialog */
+.wd-perm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.wd-perm-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+.wd-perm-dot[data-state="on"] {
+  background: var(--accent-2);
+}
+.wd-perm-dot[data-state="warn"] {
+  background: var(--warn);
+}
+.wd-perm-dot[data-state="off"] {
+  background: var(--error);
+}
+.wd-perm-text {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wd-perm-enable {
+  flex: none;
+  min-height: 32px;
+  min-width: auto;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.wd-dialog .wd-go {
+  width: 100%;
+  justify-content: center;
+}
+
+/* on-screen region selector */
+.wd-selector {
+  position: absolute;
+  z-index: 19;
+  border: 2px solid var(--accent);
+  background: rgba(47, 111, 237, 0.14);
+  border-radius: 6px;
+  box-shadow: 0 0 0 9999px rgba(6, 9, 14, 0.35);
+  touch-action: none;
+}
+.wd-selector-move {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px 0 8px 0;
+  background: var(--accent);
+  color: #fff;
+  cursor: move;
+  touch-action: none;
+}
+.wd-selector-handle {
+  position: absolute;
+  right: -12px;
+  bottom: -12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid var(--panel);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.wd-selector-bar {
+  position: absolute;
+  left: 50%;
+  bottom: -56px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+/* explainer banner shown while drawing/editing an alert region */
+.wd-selector-info {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 52px);
+  left: 12px;
+  right: 12px;
+  z-index: 20;
+  margin: 0 auto;
+  max-width: 430px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  box-shadow: 0 6px 20px var(--shadow);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.35;
+  text-align: center;
+  pointer-events: none;
+}

@@ -1,0 +1,512 @@
+/**
+ * WhipDesk wire protocol.
+ *
+ * AI-AGENT NOTES (read me before editing):
+ * - This package is TYPES ONLY. It must contain zero runtime side effects so it
+ *   can be `import type`-erased by both the agent (tsx/esbuild) and the web app (Vite).
+ * - The transport is a bidirectional message channel (WebSocket on LAN, WebRTC
+ *   DataChannel for remote — see docs/ARCHITECTURE.md). Both carry the SAME
+ *   messages defined here.
+ * - CONTROL messages are JSON text frames; every message has a `type` field. The desktop
+ *   screen reaches the controller as a WebRTC H.264 video track, not over this channel.
+ * - Pointer coordinates are ALWAYS normalized to [0,1] relative to the full desktop
+ *   screen, never pixels — resolution-independent and immune to Retina/HiDPI scaling.
+ *   The agent multiplies by the logical screen size before injecting input.
+ */
+
+export const PROTOCOL_VERSION = 1 as const;
+
+/** Default network + capture values. This is the source of truth; agent config reads these. */
+export const DEFAULTS = {
+  PORT: 8787,
+  FPS: 10,
+  // Higher quality + resolution so on-screen text stays readable when zoomed.
+  JPEG_QUALITY: 75,
+  MAX_WIDTH: 2048,
+  /** Live H.264 capture framerate (the wire codec is a single WebRTC video track). */
+  VIDEO_FPS: 30,
+  /** Target bitrate (kbps) for the MAIN (full/zoomed) H.264 track. */
+  VIDEO_KBPS: 4000,
+  // Low-res full-desktop "overview" for the minimap + the base layer under a pan/zoom. While the
+  // main track is CROPPED (zoomed), the host emits this as a SECOND H.264 track from the SAME
+  // ffmpeg via a `split` filter (one capture, two encodes — never a 2nd screen grab, which fights
+  // the live avfoundation encoder on macOS). Uncropped, there's no overview track — the main track
+  // already IS the whole desktop, so the controller snapshots that instead.
+  OVERVIEW_WIDTH: 480,
+  OVERVIEW_FPS: 2,
+  OVERVIEW_KBPS: 150,
+} as const;
+
+export type MouseButton = "left" | "right" | "middle";
+export type PointerAction = "move" | "down" | "up" | "click";
+
+/** RustDesk-inspired control mode for the mobile client. */
+export type InputMode = "absolute" | "trackpad";
+
+/** How the mobile client renders the desktop. */
+export type ViewMode = "fit" | "magnify";
+
+/**
+ * A screen region the host watches for visual change. Coordinates are normalized [0,1] of
+ * the active display. When the pixels inside change, the host fires a `notification`.
+ */
+export interface WatchRegion {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** A capturable display on the host. Sizes are logical points (not pixels). */
+export interface DisplayInfo {
+  /** 0-based index understood by the capture + input backends. */
+  id: number;
+  name: string;
+  primary: boolean;
+  width: number;
+  height: number;
+}
+
+// ---------------------------------------------------------------------------
+// Session monitoring (zero-config AI-agent watching).
+// ---------------------------------------------------------------------------
+
+/** AI coding agents the host can auto-detect from running processes. */
+export type AgentKind =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "aider"
+  | "copilot"
+  | "opencode"
+  | "cursor"
+  | "amp"
+  | "unknown";
+
+/** Inferred run state of a monitored agent session. */
+export type MonitorState = "working" | "blocked" | "idle" | "finished" | "crashed" | "unknown";
+
+/** State changes a user can be notified about (working is the all-good baseline, not an alert). */
+export type MonitorEvent = "blocked" | "idle" | "finished" | "crashed";
+
+/** A live AI-agent session the host discovered by observing processes (no wrappers/hooks). */
+export interface MonitorSessionInfo {
+  /** Stable key (agent + project/tty) so a watch survives the process restarting. */
+  key: string;
+  agent: AgentKind;
+  /** Human label, usually the project folder the agent is running in. */
+  title: string;
+  pid: number;
+  state: MonitorState;
+  /** True when a monitor is already watching this session. */
+  watched?: boolean;
+}
+
+/** An active session-monitoring auto-whip: which session, and which events to be pinged on. */
+export interface MonitorInfo {
+  id: string;
+  key: string;
+  agent: AgentKind;
+  label: string;
+  events: MonitorEvent[];
+  state: MonitorState;
+  /** False once the watched session is no longer running. */
+  live: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Client -> Agent (controller -> host)
+// ---------------------------------------------------------------------------
+
+/** First message a controller MUST send. Gates the connection by pairing token. */
+export interface HelloMessage {
+  type: "hello";
+  protocol: number;
+  token: string;
+  role: "controller";
+  client?: {
+    userAgent?: string;
+    label?: string;
+  };
+}
+
+/**
+ * PIN challenge response. The controller proves it knows the device PIN without sending it:
+ * key = stretch(pin, salt, iterations); response = sha256(key + ":" + nonce). The agent
+ * compares against its stored key. See apps/desktop-agent/src/security/pin.ts.
+ */
+export interface AuthMessage {
+  type: "auth";
+  response: string;
+}
+
+/** Tells the host whether the controller is currently viewing (Page Visibility). */
+export interface VisibilityMessage {
+  type: "visibility";
+  visible: boolean;
+}
+
+export interface PointerMessage {
+  type: "pointer";
+  action: PointerAction;
+  /** Normalized [0,1] across the full desktop. Omitted for button-only events. */
+  x?: number;
+  y?: number;
+  button?: MouseButton;
+  /** When action === "click", whether it is a double click. */
+  double?: boolean;
+}
+
+export interface ScrollMessage {
+  type: "scroll";
+  /** Wheel deltas. Positive dy scrolls down, positive dx scrolls right. */
+  dx: number;
+  dy: number;
+}
+
+/** A single key action (with optional modifiers), used for shortcuts/special keys. */
+export interface KeyMessage {
+  type: "key";
+  /** Named key, e.g. "Enter", "Escape", "ArrowUp", "Backspace", "Tab", "a". */
+  key: string;
+  press?: "tap" | "down" | "up";
+  /** e.g. ["control"], ["meta","shift"]. */
+  modifiers?: string[];
+}
+
+/** Type a literal string; primary path for "send a prompt to the AI". */
+export interface TypeMessage {
+  type: "type";
+  text: string;
+  /** When true, press Enter after typing (submits the prompt). */
+  submit?: boolean;
+}
+
+/** Adjust the live capture pipeline at runtime. */
+export interface SetQualityMessage {
+  type: "set-quality";
+  fps?: number;
+  quality?: number;
+  maxWidth?: number;
+}
+
+/**
+ * Tell the host to capture + send ONLY this sub-region of the active display, in normalized
+ * [0,1] coordinates. Sent when the controller zooms/pans so the agent crops instead of
+ * streaming the whole desktop — a large bandwidth win when magnified. A full-screen viewport
+ * is `{ x: 0, y: 0, w: 1, h: 1 }` (or any w/h >= 1). The host clamps to the display, applies
+ * it globally (most-recent-wins, like `set-quality`), and echoes the region it actually used
+ * back via `screen-region` so the controller can place each cropped frame correctly.
+ */
+export interface SetViewportMessage {
+  type: "set-viewport";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface RequestFrameMessage {
+  type: "request-frame";
+}
+
+/** Switch which display the host captures + injects input onto. */
+export interface SelectDisplayMessage {
+  type: "select-display";
+  id: number;
+}
+
+/** Add a screen-region change watcher (fires a notification when those pixels change). */
+export interface WatchAddMessage {
+  type: "watch-add";
+  region: WatchRegion;
+}
+
+/** Remove a screen-region watcher by id. */
+export interface WatchRemoveMessage {
+  type: "watch-remove";
+  id: string;
+}
+
+/**
+ * Optional action the host performs when a timer fires (besides notifying). Lets a user schedule
+ * an auto-click/keypress for when an AI tool's session cooldown ends — e.g. click "Retry" or send
+ * a prompt the moment Claude/Copilot is available again. Coordinates are normalized [0,1].
+ */
+export interface ScheduledAction {
+  kind: "click" | "key" | "text";
+  /** Target point for a click, or where to focus before a key/text action. */
+  x?: number;
+  y?: number;
+  /** For kind "click". */
+  button?: MouseButton;
+  /** For kind "key", e.g. "Enter". */
+  key?: string;
+  /** For kind "text": typed, then submitted with Enter. */
+  text?: string;
+}
+
+/** Schedule a one-shot reminder (and optional action) that fires `fireInMs` from now. */
+export interface TimerAddMessage {
+  type: "timer-add";
+  id: string;
+  fireInMs: number;
+  label: string;
+  action?: ScheduledAction;
+}
+
+/** Cancel a pending timer by id. */
+export interface TimerRemoveMessage {
+  type: "timer-remove";
+  id: string;
+}
+
+/** Ask the host to (re)scan for running AI-agent sessions; it replies with `monitor-sessions`. */
+export interface MonitorScanMessage {
+  type: "monitor-scan";
+}
+
+/** Start monitoring a discovered session and pick which state changes fire a notification. */
+export interface MonitorAddMessage {
+  type: "monitor-add";
+  id: string;
+  key: string;
+  agent: AgentKind;
+  label: string;
+  events: MonitorEvent[];
+}
+
+/** Stop a session monitor by id. */
+export interface MonitorRemoveMessage {
+  type: "monitor-remove";
+  id: string;
+}
+
+export interface PingMessage {
+  type: "ping";
+  t: number;
+}
+
+export type ClientMessage =
+  | HelloMessage
+  | AuthMessage
+  | VisibilityMessage
+  | PointerMessage
+  | ScrollMessage
+  | KeyMessage
+  | TypeMessage
+  | SetQualityMessage
+  | SetViewportMessage
+  | RequestFrameMessage
+  | SelectDisplayMessage
+  | WatchAddMessage
+  | WatchRemoveMessage
+  | TimerAddMessage
+  | TimerRemoveMessage
+  | MonitorScanMessage
+  | MonitorAddMessage
+  | MonitorRemoveMessage
+  | PingMessage;
+
+// ---------------------------------------------------------------------------
+// Agent -> Client (host -> controller)
+// ---------------------------------------------------------------------------
+
+export interface ScreenInfo {
+  /** Logical screen size in points; pointer normals map onto this. */
+  width: number;
+  height: number;
+}
+
+export interface AgentCapabilities {
+  mouse: boolean;
+  keyboard: boolean;
+  /** Capture backend identifier, e.g. "screenshot-desktop". */
+  capture: string;
+  /** Host can crop to a sub-region (`set-viewport`). False => it always sends the full screen. */
+  region?: boolean;
+  /** Host can stream a real WebRTC video track (H.264/VP8) instead of JPEG frames. */
+  video?: boolean;
+  /** Host can auto-detect + monitor running AI-agent sessions. */
+  monitor?: boolean;
+}
+
+export interface WelcomeMessage {
+  type: "welcome";
+  protocol: number;
+  agent: {
+    version: string;
+    /** Node's `process.platform`, e.g. "darwin", "win32", "linux". */
+    platform: string;
+    hostname: string;
+  };
+  screen: ScreenInfo;
+  capture: {
+    fps: number;
+    quality: number;
+    maxWidth: number;
+  };
+  capabilities: AgentCapabilities;
+  /** All capturable displays and which one is currently active. */
+  displays: DisplayInfo[];
+  activeDisplay: number;
+  /** Active screen-region change watchers. */
+  watchers: WatchRegion[];
+  /** Pending one-shot timers (reminders / scheduled actions). */
+  timers: TimerInfo[];
+  /** Active session monitors. */
+  monitors: MonitorInfo[];
+  /** Recent notifications so a freshly connected client has context. */
+  notifications: NotificationMessage[];
+}
+
+/** The current set of region watchers (sent when the list changes). */
+export interface WatchersMessage {
+  type: "watchers";
+  regions: WatchRegion[];
+}
+
+/** A pending timer, surfaced so controllers can show a live countdown. */
+export interface TimerInfo {
+  id: string;
+  label: string;
+  /** Host-epoch ms when it fires; the client derives the remaining time. */
+  fireAtMs: number;
+  /** Whether an auto-action (click/key/text) runs when it fires. */
+  hasAction: boolean;
+}
+
+/** The current set of pending timers (sent when the list changes). */
+export interface TimersMessage {
+  type: "timers";
+  timers: TimerInfo[];
+}
+
+/** Live AI-agent sessions the host discovered (reply to `monitor-scan`). */
+export interface MonitorSessionsMessage {
+  type: "monitor-sessions";
+  sessions: MonitorSessionInfo[];
+}
+
+/** The current set of active session monitors (sent when the list or a state changes). */
+export interface MonitorsMessage {
+  type: "monitors";
+  monitors: MonitorInfo[];
+}
+
+/** Sent when the logical screen size changes (resolution / display switch). */
+export interface ScreenMetaMessage {
+  type: "screen-meta";
+  screen: ScreenInfo;
+  /** Present when the change was a display switch. */
+  activeDisplay?: number;
+}
+
+/**
+ * The desktop sub-region the host is currently cropping to, normalized [0,1] of the active
+ * display. Lets the controller map each cropped frame back onto the full desktop. Full screen
+ * is `{ x: 0, y: 0, w: 1, h: 1 }`. Sent whenever the active viewport changes (see
+ * `SetViewportMessage`) and once on `welcome`.
+ */
+export interface ScreenRegionMessage {
+  type: "screen-region";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /**
+   * False/absent = the REQUESTED region, echoed the instant the host applies a viewport (lets the
+   * controller update the minimap + target immediately). True = that region is now LIVE — the host's
+   * re-cropped ffmpeg has produced its FIRST frame, so the controller can switch the displayed frame
+   * onto the new rectangle without guessing how long the re-crop took (it's variable: avfoundation
+   * re-init alone can exceed half a second). See ScreenView's region bridge.
+   */
+  active?: boolean;
+}
+
+/**
+ * Host requires a PIN. Sent instead of `welcome` after a valid `hello` when a PIN is set.
+ * The controller answers with an `auth` message. `attemptsLeft` lets the UI warn before
+ * the host closes the socket.
+ */
+export interface AuthRequiredMessage {
+  type: "auth-required";
+  /** Hex salt for the key-stretch. */
+  salt: string;
+  /** Iteration count for the stretch (sha256 chain). */
+  iterations: number;
+  /** Hex nonce that binds this response (prevents replay). */
+  nonce: string;
+  attemptsLeft: number;
+}
+
+/** How many controllers are currently watching this host (delivered to controllers). */
+export interface PresenceMessage {
+  type: "presence";
+  watchers: number;
+}
+
+export type NotificationLevel = "info" | "success" | "warning" | "error";
+
+/** Generic event delivered to controllers; the AI-completion use case rides this. */
+export interface NotificationMessage {
+  type: "notification";
+  id: string;
+  title: string;
+  body?: string;
+  level: NotificationLevel;
+  /** Free-form origin, e.g. "webhook", "file-watcher:build.log", "vscode". */
+  source: string;
+  /** Epoch milliseconds. */
+  t: number;
+}
+
+export interface PongMessage {
+  type: "pong";
+  t: number;
+}
+
+export interface ErrorMessage {
+  type: "error";
+  message: string;
+  /** Optional machine-readable code, e.g. "input-unavailable". */
+  code?: string;
+  /** For rate-limit/lockout errors (`code: "pin-locked"`): when the client may retry, in ms. */
+  retryAfterMs?: number;
+}
+
+export type ServerMessage =
+  | WelcomeMessage
+  | AuthRequiredMessage
+  | ScreenMetaMessage
+  | ScreenRegionMessage
+  | PresenceMessage
+  | WatchersMessage
+  | TimersMessage
+  | MonitorSessionsMessage
+  | MonitorsMessage
+  | NotificationMessage
+  | PongMessage
+  | ErrorMessage;
+
+// ---------------------------------------------------------------------------
+// Type guards (handy on both ends).
+// ---------------------------------------------------------------------------
+
+export function isClientMessage(value: unknown): value is ClientMessage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === "string"
+  );
+}
+
+export function isServerMessage(value: unknown): value is ServerMessage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === "string"
+  );
+}
