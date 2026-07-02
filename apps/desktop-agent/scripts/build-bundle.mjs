@@ -32,7 +32,14 @@ export async function buildBundle() {
 
   // The agent serves the controller PWA over LAN, so ship the built mobile-web NEXT TO the bundle
   // (dist/mobile-web). server.ts resolves it there in a packaged build.
-  const web = spawnSync("npm", ["run", "build", "--workspace", "@whipdesk/mobile-web"], { stdio: "inherit", cwd: repoRoot });
+  // shell:true on Windows — `npm` there is `npm.cmd`, which spawnSync can't launch without a shell
+  // (it returns status:null). node/esbuild run direct.
+  const web = spawnSync("npm", ["run", "build", "--workspace", "@whipdesk/mobile-web"], {
+    stdio: "inherit",
+    cwd: repoRoot,
+    shell: process.platform === "win32",
+  });
+  if (web.error) throw new Error(`mobile-web build -> ${web.error.message}`);
   if (web.status !== 0) throw new Error(`mobile-web build -> exit ${web.status}`);
   const webOut = join(agentDir, "dist/mobile-web");
   rmSync(webOut, { recursive: true, force: true });

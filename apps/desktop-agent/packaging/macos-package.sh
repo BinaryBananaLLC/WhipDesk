@@ -40,6 +40,12 @@ if [[ -n "${APPLE_CERT_P12:-}" ]]; then
   security import "$TMP/cert.p12" -k "$KEYCHAIN" -P "${APPLE_CERT_PASSWORD:-}" -T /usr/bin/codesign -T /usr/bin/productbuild
   security set-key-partition-list -S apple-tool:,apple: -s -k "$KPW" "$KEYCHAIN" >/dev/null
   security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+  # Show what actually landed in the keychain. codesign/productbuild fail with a cryptic "specified
+  # item could not be found in the keychain" when APPLE_CERT_P12 is missing the Developer ID
+  # Application/Installer identity (or its private key), or when APPLE_SIGN_IDENTITY /
+  # APPLE_INSTALLER_IDENTITY don't EXACTLY match the names below. Expect TWO identities.
+  echo "Signing identities available in the build keychain:"
+  security find-identity -v "$KEYCHAIN" || true
 fi
 
 sign() { codesign --force --timestamp --options runtime --entitlements "$ENTITLEMENTS" --sign "$APPLE_SIGN_IDENTITY" "$1"; }

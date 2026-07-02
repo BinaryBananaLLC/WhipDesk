@@ -45,7 +45,11 @@ if (!readFileSync(process.execPath).includes(SENTINEL)) {
 }
 
 function run(cmd, args, opts = {}) {
-  const r = spawnSync(cmd, args, { stdio: "inherit", cwd: agentDir, shell: false, ...opts });
+  // Windows can't spawn npm/npx directly (they're `.cmd` shims) — they need a shell, which returns
+  // status:null otherwise. `node`/`codesign` are real executables and run without one.
+  const shell = process.platform === "win32" && (cmd === "npm" || cmd === "npx");
+  const r = spawnSync(cmd, args, { stdio: "inherit", cwd: agentDir, shell, ...opts });
+  if (r.error) throw new Error(`${cmd} ${args.join(" ")} -> ${r.error.message}`);
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} -> exit ${r.status}`);
 }
 

@@ -56,7 +56,14 @@ jobs:
         shell: bash
         run: |
           TAG="${{ github.event.release.tag_name || inputs.tag }}"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          VER="${TAG#v}"
+          # Fail fast on a malformed tag (e.g. "v.0.0.3" -> ".0.0.3") instead of a cryptic
+          # `npm error Invalid version` deep in the build. Tags must be vMAJOR.MINOR.PATCH.
+          if ! printf '%s' "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-+.].*)?$'; then
+            echo "::error::Tag '$TAG' is not vX.Y.Z (parsed version '$VER'). Re-tag as e.g. v0.0.3."
+            exit 1
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Stamp version (single source of truth)
         shell: bash
