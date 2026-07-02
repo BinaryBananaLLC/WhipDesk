@@ -1,23 +1,24 @@
 name: Release
 
 # Builds, signs, provenances the desktop-agent packages, then creates the GitHub Release with the
-# assets ATTACHED and publishes to npm/brew/scoop/winget. Triggered by pushing a version tag
-# (`git tag v1.4.0 && git push origin v1.4.0`). Never runs per-commit. workflow_dispatch rebuilds
-# an existing tag.
+# assets ATTACHED and publishes to npm/brew/scoop/winget. Never runs per-commit.
 #
-# Why a tag trigger and not "release: published"? GitHub's IMMUTABLE RELEASES seals a release the
-# moment it is published — you can no longer add assets. So the release must be created as a DRAFT,
-# have every asset attached, and only THEN be flipped to published. That means CI has to own release
-# creation; a human clicking "Publish" in the UI first would seal an empty release. Release notes are
-# auto-generated (`generate_release_notes`); the body stays editable after publish if you want to
-# refine them — only the tag + assets are frozen.
+# HOW TO RELEASE (100% in the browser): Actions → Release → "Run workflow" → type the new tag
+# (e.g. v0.1.0) → Run. The workflow creates the tag at the selected branch's HEAD, builds, and
+# publishes everything. Pushing a v* tag from a terminal works too.
+#
+# NEVER create releases from the Releases page. This repo has IMMUTABLE RELEASES: publishing seals
+# a release the moment it is created — assets can no longer be attached, and the tag name is burned
+# FOREVER (deleting the sealed release does not free it). So the release must be created by CI as a
+# DRAFT, have every asset attached, and only then be flipped to published. Release notes are
+# auto-generated; the body stays editable after publish — only the tag + assets are frozen.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build + release (e.g. v1.4.0)
+        description: Tag to release, e.g. v0.1.0 — created at the selected branch's HEAD if it doesn't exist yet
         required: true
 
 permissions:
@@ -59,11 +60,11 @@ jobs:
           fi
 
       # Immutable releases seal on publish AND burn the tag name forever (deleting the release does
-      # NOT free it). If someone already published a release for this tag — e.g. by creating it in
-      # the GitHub UI, which is also what pushes the tag — no assets can ever be attached and the tag
-      # is unrecoverable. Fail HERE, before 5 platform builds, with instructions, instead of failing
-      # cryptically at the upload step. A leftover DRAFT (from a run that died mid-release) is fine:
-      # the release job updates it in place.
+      # NOT free it). If someone already published a release for this tag — e.g. by creating it on
+      # the Releases page, which is also what pushes the tag — no assets can ever be attached and the
+      # tag is unrecoverable. Fail HERE, before 5 platform builds, with instructions, instead of
+      # failing cryptically at the upload step. A leftover DRAFT (from a run that died mid-release)
+      # is fine: the release job updates it in place.
       - name: Guard - tag must not already have a published release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -71,8 +72,24 @@ jobs:
         run: |
           draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.draft' 2>/dev/null || echo "none")
           if [ "$draft" = "false" ]; then
-            echo "::error::A release for $TAG is ALREADY PUBLISHED (immutable: assets can never be added, and even after deletion the tag name '$TAG' can never host a release again). Bump the version and push a fresh tag: git tag vNEXT && git push origin vNEXT. Never create releases from the GitHub UI — this workflow creates and publishes the release itself."
+            echo "::error::A release for $TAG is ALREADY PUBLISHED (immutable: assets can never be added, and even after deletion the tag name '$TAG' can never host a release again). Release the NEXT version instead: Actions -> Release -> Run workflow -> enter the next tag. Never create releases from the Releases page — this workflow creates and publishes the release itself."
             exit 1
+          fi
+
+      # Browser-only releases: "Run workflow" with a NEW tag creates it right here, at the HEAD of
+      # the branch selected in the dispatch dropdown. (Tags created with GITHUB_TOKEN don't re-trigger
+      # this workflow, so there is no double run.) An existing tag is simply rebuilt.
+      - name: Create the tag if new (Run-workflow releases)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.r.outputs.tag }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .ref >/dev/null 2>&1; then
+            echo "Tag $TAG already exists — rebuilding it."
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" >/dev/null
+            echo "Created tag $TAG at $GITHUB_SHA (HEAD of the selected branch)."
           fi
 
   build:
