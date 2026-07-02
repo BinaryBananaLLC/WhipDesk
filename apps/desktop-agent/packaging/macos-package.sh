@@ -55,7 +55,13 @@ if [[ -n "${APPLE_SIGN_IDENTITY:-}" ]]; then
   while IFS= read -r -d '' f; do
     if file "$f" | grep -q "Mach-O"; then sign "$f"; fi
   done < <(find "$STAGE/resources" -type f -print0)
+  # The main binary was ad-hoc signed by build-sea.mjs right after postject injected the NODE_SEA
+  # segment. Re-signing straight over that leaves a signature the notary calls invalid ("The
+  # signature of the binary is invalid"), so strip it and sign the bare binary clean.
+  codesign --remove-signature "$STAGE/whipdesk" || true
   sign "$STAGE/whipdesk"
+  # Catch a bad signature HERE (with codesign's exact reason) instead of ~10 min later at the notary.
+  codesign --verify --strict --verbose=2 "$STAGE/whipdesk"
 else
   echo "::warning::APPLE_SIGN_IDENTITY unset — building UNSIGNED pkg (Gatekeeper will block it)."
 fi
