@@ -47,15 +47,27 @@ Integrity is anchored by **SLSA build-provenance attestations** + the published 
 Windows is intentionally **attestation-only** (no code-signing cert) — see the trust story in
 [VERIFYING-DOWNLOADS.md](VERIFYING-DOWNLOADS.md).
 
-### macOS notarization toolchain
+### macOS signing & notarization
 
-The arm64 build must run on **`macos-15` or newer**, not `macos-14`. `macos-14`'s (Sonoma) `codesign`
-signs the postject'd SEA binary such that it passes local `codesign --verify` but the notary rejects
-it with *"The signature of the binary is invalid."* Newer toolchains sign it correctly (verified
-end-to-end locally against the real Developer ID certs). The x64 build still runs on `macos-13` (the
-only free Intel runner). If x64 notarization hits the same signature rejection, the options are: cut
-Intel over to the npm/Homebrew path only, or cross-build the x64 SEA on `macos-15` — the arm64 `.pkg`
-is the primary artifact.
+Mach-O binaries (the SEA executable + its bundled native libs) are signed with **`rcodesign`**
+([indygreg/apple-codesign](https://github.com/indygreg/apple-platform-rs)), **not** Apple's
+`codesign`. The workflow installs a pinned, checksum-verified `rcodesign` on the macOS runners.
+Because rcodesign is a version-stable, runner-independent signer, the runner's macOS version no
+longer affects notarization — the arm64 (`macos-15`) and x64 (`macos-13`) legs notarize identically.
+(This replaced a `codesign` flow whose signature for the large postject'd SEA binary passed local
+`codesign --verify` but the notary rejected as *"The signature of the binary is invalid."*)
+
+The Mach-O signing cert is the **Developer ID Application** identity, extracted from `APPLE_CERT_P12`
+at build time (rcodesign otherwise signs with the *last* identity in the p12, which may be the
+Installer cert). The `.pkg` itself is still signed by `productbuild` with the **Developer ID Installer**
+identity.
+
+The payload installs under **`/usr/local/whipdesk/libexec/`** — *not* directly in `/usr/local/whipdesk`.
+A directory named `whipdesk` holding an executable `whipdesk` **and** a `resources` dir (≈ `Resources`
+on case-insensitive APFS) is detected by macOS as a legacy *flat bundle*, so the notary rejects the
+lone-Mach-O signature as invalid. Nesting under `libexec` makes the executable's parent dir name differ
+from the executable name, keeping it a plain directory; `/usr/local/bin/whipdesk` symlinks to it. Both
+the arm64 and x64 `.pkg`s are verified to notarize + staple end-to-end.
 
 ## Homebrew tap setup (one-time)
 

@@ -27,13 +27,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-15+, NOT macos-14: Sonoma's codesign produces a signature for the postject'd SEA
-          # binary that passes local `codesign --verify` but the notary rejects as invalid. Newer
-          # macOS toolchains sign it correctly (verified end-to-end locally against the real certs).
+          # Mach-O signing uses rcodesign (see apps/desktop-agent/packaging/macos-package.sh) — a
+          # version-stable, runner-independent signer — so the macOS runner version no longer affects
+          # notarization. This is what fixed the macOS 14/15 codesign "signature invalid" bug on the
+          # postject'd SEA binary, and it puts the Intel (x64) leg on the same footing as arm64.
           - os: macos-15 # Apple Silicon
             target: macos-arm64
             arch: arm64
-          - os: macos-13 # Intel (oldest free Intel runner; see note in RELEASING.md re: x64 notarization)
+          - os: macos-13 # Intel (oldest free Intel runner)
             target: macos-x64
             arch: x64
           - os: windows-latest
@@ -74,6 +75,21 @@ jobs:
 
       - name: Build SEA (bundle + embed runtime + stage native deps)
         run: npm run build:sea --workspace whipdesk
+
+      # macOS Mach-O signing uses rcodesign instead of Apple's codesign (which mis-signs the large
+      # postject'd SEA binary on macOS 14/15 runners so the notary rejects it). Pinned + checksum-verified.
+      - name: Install rcodesign (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        env:
+          RCODESIGN_VERSION: "0.29.0"
+          RCODESIGN_SHA256: "d98372d5524226ccf9dc0eda03d4e4f5826182dabb2fc3f2bd303ed9113a748d"
+        run: |
+          url="https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/${RCODESIGN_VERSION}/apple-codesign-${RCODESIGN_VERSION}-macos-universal.tar.gz"
+          curl -fsSL -o /tmp/rcodesign.tar.gz "$url"
+          echo "${RCODESIGN_SHA256}  /tmp/rcodesign.tar.gz" | shasum -a 256 -c -
+          tar -C /tmp -xzf /tmp/rcodesign.tar.gz
+          echo "/tmp/apple-codesign-${RCODESIGN_VERSION}-macos-universal" >> "$GITHUB_PATH"
 
       # --- macOS: sign + .pkg + notarize + staple (all conditionals live in the bash script) ---
       - name: Package macOS (.pkg)
