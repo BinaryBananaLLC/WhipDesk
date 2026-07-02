@@ -42,7 +42,7 @@ export interface SessionOptions {
 }
 
 /** Constant-time string compare that never short-circuits on length or content. */
-function safeEqual(a: string, b: string): boolean {
+export function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(String(a), "utf8");
   const bb = Buffer.from(String(b), "utf8");
   if (ab.length !== bb.length) {
@@ -263,6 +263,9 @@ async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Contr
       break;
     case "visibility":
       ctx.setVisibility(controller, msg.visible);
+      break;
+    case "video-stats":
+      ctx.reportVideoStats(msg.lossPct, msg.rttMs);
       break;
     case "ping":
       controller.send({ type: "pong", t: msg.t });

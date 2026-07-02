@@ -13,11 +13,20 @@ interface Session {
   pid: number;
   cwd: string;
   activityPaths: string[];
+  /** See AgentDef.ignoreCpu — editor-embedded agents whose host CPU is meaningless. */
+  ignoreCpu: boolean;
+  /** See AgentDef.tailHint — transcript-tail disambiguation for the quiet window. */
+  tailHint: ((cwd: string) => Promise<"working" | "waiting" | null>) | null;
   state: MonitorState;
   /** A candidate next state awaiting time-based confirmation (see `transition`). */
   candidate: MonitorState | null;
   /** When `candidate` was first observed (epoch ms), so we can require it to persist. */
   candidateSince: number;
+  /** Last "the agent is working" signal from an external hook (epoch ms; 0 = none). */
+  externalActivityAt: number;
+  /** When an external hook declared the turn over (epoch ms; 0 = none). Cleared when the
+   * transcript is written again AFTER this instant — the agent demonstrably resumed. */
+  externalStoppedAt: number;
 }
 
 interface Watch {
@@ -133,6 +142,30 @@ export class SessionMonitor {
     }
   }
 
+  /**
+   * Precision mode: an agent-native hook (e.g. Claude Code's Stop/Notification hooks POSTing to
+   * /api/agent-event) tells us EXACTLY when a turn ends or input is needed — no inference delay,
+   * no debounce. Entirely optional; process+transcript observation keeps working without it.
+   * Returns false when no live session of that kind matched (the caller reports 404).
+   */
+  recordAgentEvent(agent: AgentKind, event: "working" | "stopped", cwd?: string): boolean {
+    const sessions = [...this.sessions.values()].filter((s) => s.agent === agent);
+    const session = (cwd && sessions.find((s) => s.cwd === cwd)) || (sessions.length === 1 ? sessions[0] : null);
+    if (!session) return false;
+    if (event === "working") {
+      session.externalActivityAt = Date.now();
+      session.externalStoppedAt = 0;
+      this.transition(session, "working");
+    } else {
+      session.externalActivityAt = 0;
+      session.externalStoppedAt = Date.now();
+      // The hook is authoritative — surface "waiting on you" NOW, skipping the confirm window.
+      this.transition(session, "blocked", true);
+    }
+    this.emitMonitors(false);
+    return true;
+  }
+
   /** The poll loop only needs to run while there's something to observe. */
   private maybeStop(): void {
     if (this.watches.size === 0 && this.always.size === 0) this.stop();
@@ -195,9 +228,13 @@ export class SessionMonitor {
             pid: p.pid,
             cwd,
             activityPaths: def.activityPaths(cwd),
+            ignoreCpu: def.ignoreCpu ?? false,
+            tailHint: def.tailHint ?? null,
             state: "unknown",
             candidate: null,
             candidateSince: 0,
+            externalActivityAt: 0,
+            externalStoppedAt: 0,
           };
           this.sessions.set(key, s);
         } else {
@@ -220,11 +257,36 @@ export class SessionMonitor {
         }
 
         const activity = await newestActivity(s.activityPaths);
+        const now = Date.now();
+        let activityAgeMs = activity == null ? null : Math.max(0, now - activity);
+        // External hook signals refine the picture (see recordAgentEvent):
+        //  - a "working" event counts as fresh activity;
+        //  - a "stopped" event means the last transcript burst was the turn ENDING, so its fresh
+        //    mtime must not read as "working" — until the transcript is written again afterwards.
+        if (s.externalActivityAt) {
+          const extAge = now - s.externalActivityAt;
+          if (activityAgeMs == null || extAge < activityAgeMs) activityAgeMs = Math.max(0, extAge);
+        }
+        if (s.externalStoppedAt) {
+          if (activity != null && activity > s.externalStoppedAt) s.externalStoppedAt = 0;
+          else if (activityAgeMs != null) activityAgeMs = Math.max(activityAgeMs, DEFAULT_THRESHOLDS.workingFreshMs);
+        }
+        // Quiet window (not fresh, not yet idle) is ambiguous: mid-turn pause vs turn over. Agents
+        // with a readable transcript tail can disambiguate — "working" keeps it working.
+        if (
+          s.tailHint &&
+          activityAgeMs != null &&
+          activityAgeMs >= DEFAULT_THRESHOLDS.workingFreshMs &&
+          activityAgeMs < DEFAULT_THRESHOLDS.blockedWindowMs
+        ) {
+          const hint = await s.tailHint(s.cwd).catch(() => null);
+          if (hint === "working") activityAgeMs = 0;
+        }
         this.transition(s, inferState(s.state === "unknown" ? "idle" : s.state, {
           present: true,
-          cpu: p.cpu,
-          subtreeCpu: subtreeCpu(p.pid, children),
-          activityAgeMs: activity == null ? null : Math.max(0, Date.now() - activity),
+          cpu: s.ignoreCpu ? 0 : p.cpu,
+          subtreeCpu: s.ignoreCpu ? 0 : subtreeCpu(p.pid, children),
+          activityAgeMs,
         }));
       }
 
@@ -250,7 +312,7 @@ export class SessionMonitor {
     }
   }
 
-  private transition(s: Session, next: MonitorState): void {
+  private transition(s: Session, next: MonitorState, immediate = false): void {
     if (next === s.state) {
       s.candidate = null;
       return;
@@ -259,9 +321,11 @@ export class SessionMonitor {
     // pauses between transcript writes, and one quiet poll must not read as "needs you". "working"
     // and the terminal states (crashed/finished) surface immediately so the UI stays responsive.
     // If the agent resumes during the window, inferState returns to the live state and clears the
-    // candidate above, so the timer effectively resets.
-    const confirmMs =
-      next === "blocked" ? DEFAULT_THRESHOLDS.blockedConfirmMs : next === "idle" ? DEFAULT_THRESHOLDS.idleConfirmMs : 0;
+    // candidate above, so the timer effectively resets. `immediate` (hook-driven events) skips the
+    // confirm window: the agent itself told us, so there is nothing to debounce.
+    const confirmMs = immediate
+      ? 0
+      : next === "blocked" ? DEFAULT_THRESHOLDS.blockedConfirmMs : next === "idle" ? DEFAULT_THRESHOLDS.idleConfirmMs : 0;
     if (confirmMs > 0) {
       const now = Date.now();
       if (s.candidate !== next) {

@@ -293,6 +293,19 @@ export interface MonitorAlwaysMessage {
   enabled: boolean;
 }
 
+/**
+ * Client-measured video link quality, sent periodically (~5s) while a video track is live. The
+ * host uses it to walk its encoder quality ladder: sustained loss steps the bitrate/fps down,
+ * a clean link slowly steps back up. Values come from `RTCPeerConnection.getStats()`.
+ */
+export interface VideoStatsMessage {
+  type: "video-stats";
+  /** Packet loss over the reporting window, percent (0-100). */
+  lossPct: number;
+  /** Current round-trip time in ms, when the engine reports it. */
+  rttMs?: number;
+}
+
 export interface PingMessage {
   type: "ping";
   t: number;
@@ -318,6 +331,7 @@ export type ClientMessage =
   | MonitorAddMessage
   | MonitorRemoveMessage
   | MonitorAlwaysMessage
+  | VideoStatsMessage
   | PingMessage;
 
 // ---------------------------------------------------------------------------

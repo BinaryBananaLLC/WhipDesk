@@ -170,9 +170,14 @@ function sameCrop(a: Region | null, b: Region | null): boolean {
   const e = 0.002;
   return Math.abs(a.x - b.x) < e && Math.abs(a.y - b.y) < e && Math.abs(a.w - b.w) < e && Math.abs(a.h - b.h) < e;
 }
-/** True when two configs would produce an identical ffmpeg pipeline (only crop + display change). */
+/** True when two configs would produce an identical ffmpeg pipeline. */
 function sameConfig(a: CaptureConfig, b: CaptureConfig): boolean {
-  return a.displayIndex === b.displayIndex && sameCrop(a.crop, b.crop);
+  return (
+    a.displayIndex === b.displayIndex &&
+    sameCrop(a.crop, b.crop) &&
+    a.fps === b.fps &&
+    a.kbps === b.kbps
+  );
 }
 
 const kbpsArg = (kbps: number): string => `${Math.max(80, Math.round(kbps))}k`;
@@ -495,8 +500,16 @@ export class VideoHub {
   /** Overview-track sinks (the 2nd, low-res full-desktop output that flows only while cropped). */
   private readonly overviewSinks = new Set<VideoTrackSink>();
   private crop: Region | null = null;
+  /** Current encoder rate (adaptive: the quality ladder moves these between reconnects). */
+  private kbps: number;
+  private fps: number;
+  /** True while every controller is backgrounded — the encoder is stopped, sinks are kept. */
+  private paused = false;
 
-  constructor(private readonly opts: VideoHubOptions) {}
+  constructor(private readonly opts: VideoHubOptions) {
+    this.kbps = opts.kbps;
+    this.fps = opts.fps;
+  }
 
   get size(): number {
     return this.sinks.size;
@@ -542,7 +555,34 @@ export class VideoHub {
     void this.session?.reconfigure({ displayIndex: index, crop: null });
   }
 
+  /** Adaptive quality: retarget the encoder's bitrate/framerate (restart-based, like a re-crop). */
+  setQuality(kbps: number, fps: number): void {
+    this.kbps = kbps;
+    this.fps = fps;
+    void this.session?.reconfigure({ kbps, fps });
+  }
+
+  /**
+   * Nobody is looking (every controller reported hidden): stop the encoder but KEEP the sinks, so
+   * the host burns no CPU/bandwidth encoding frames no one sees. Unpausing restarts the capture,
+   * which re-keys (fresh IDR) — the controller shows live video again within the usual re-key time.
+   * Region watchers/session monitors are untouched: they run on their own samplers, never this one.
+   */
+  setPaused(paused: boolean): void {
+    if (paused === this.paused) return;
+    this.paused = paused;
+    if (paused) {
+      if (this.session) {
+        this.session.stop();
+        this.session = null;
+      }
+    } else if (this.sinks.size > 0 || this.overviewSinks.size > 0) {
+      void this.ensureSession();
+    }
+  }
+
   private async ensureSession(): Promise<void> {
+    if (this.paused) return;
     if (this.session) return;
     if (this.starting) return this.starting;
     this.starting = (async () => {
@@ -550,8 +590,8 @@ export class VideoHub {
         {
           displayIndex: this.opts.displayIndex(),
           crop: this.crop,
-          fps: this.opts.fps,
-          kbps: this.opts.kbps,
+          fps: this.fps,
+          kbps: this.kbps,
           maxWidth: this.opts.maxWidth,
           overview: this.opts.overview ?? null,
         },
@@ -561,8 +601,9 @@ export class VideoHub {
       session.onOverviewRtp((p) => this.fanOverview(p));
       if (this.opts.onCropActive) session.onActive((crop) => this.opts.onCropActive!(crop));
       await session.start();
-      // The controller may have disconnected during startup — don't leave ffmpeg orphaned.
-      if (this.sinks.size === 0 && this.overviewSinks.size === 0) session.stop();
+      // The controller may have disconnected (or everyone backgrounded) during startup — don't
+      // leave ffmpeg orphaned.
+      if (this.paused || (this.sinks.size === 0 && this.overviewSinks.size === 0)) session.stop();
       else this.session = session;
     })().finally(() => (this.starting = null));
     return this.starting;

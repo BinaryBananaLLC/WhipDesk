@@ -1,19 +1,21 @@
-import type {
-  AgentKind,
-  ClientMessage,
-  MonitorInfo,
-  MonitorSessionInfo,
-  NotificationMessage,
-  ScreenInfo,
-  ServerMessage,
-  TimerInfo,
-  WatchRegion,
-  WelcomeMessage,
+import {
+  isServerMessage,
+  type AgentKind,
+  type ClientMessage,
+  type MonitorInfo,
+  type MonitorSessionInfo,
+  type NotificationMessage,
+  type ScreenInfo,
+  type ServerMessage,
+  type TimerInfo,
+  type WatchRegion,
+  type WelcomeMessage,
 } from "@whipdesk/protocol";
 import { responseFor, stretch } from "./crypto";
 
-// Mirrors PROTOCOL_VERSION in packages/protocol. Kept local so the client never needs a
-// RUNTIME import from the types-only package.
+// Mirrors PROTOCOL_VERSION in packages/protocol. Kept local so version-mismatch detection works
+// even against a protocol build that predates the constant. (The tiny isServerMessage guard IS
+// imported from the package — Vite inlines it.)
 export const PROTOCOL_VERSION = 1;
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
@@ -161,12 +163,14 @@ export class ControllerCore {
 
   /** Feed an inbound JSON control message. */
   handleText(raw: string): void {
-    let message: ServerMessage;
+    let parsed: unknown;
     try {
-      message = JSON.parse(raw) as ServerMessage;
+      parsed = JSON.parse(raw);
     } catch {
       return;
     }
+    if (!isServerMessage(parsed)) return;
+    const message: ServerMessage = parsed;
     switch (message.type) {
       case "welcome":
         this.challenge = null;

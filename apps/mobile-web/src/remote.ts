@@ -327,17 +327,28 @@ export class RemoteConnection {
   /** Poll getStats once a second for fps + round-trip, surfaced in the connection dialog. */
   private startStatsPoll(pc: RTCPeerConnection): void {
     window.clearInterval(this.statsTimer);
+    this.lossBase = null;
+    this.statsPolls = 0;
     this.statsTimer = window.setInterval(() => void this.pollStats(pc), 1000);
   }
+
+  // Cumulative inbound video counters at the start of the current loss-reporting window; every
+  // ~5s the delta becomes a `video-stats` report the host's quality ladder adapts to.
+  private lossBase: { lost: number; received: number } | null = null;
+  private statsPolls = 0;
 
   private async pollStats(pc: RTCPeerConnection): Promise<void> {
     let rtt: number | null = null;
     let fps = 0;
+    let lost = 0;
+    let received = 0;
     try {
       const stats = await pc.getStats();
       stats.forEach((r: any) => {
         if (r.type === "inbound-rtp" && r.kind === "video") {
           fps = Math.max(fps, Number(r.framesPerSecond ?? 0));
+          lost += Number(r.packetsLost ?? 0);
+          received += Number(r.packetsReceived ?? 0);
         } else if (r.type === "candidate-pair" && r.nominated && typeof r.currentRoundTripTime === "number") {
           rtt = r.currentRoundTripTime as number;
         }
@@ -346,6 +357,21 @@ export class RemoteConnection {
       return; // stats unavailable on this engine
     }
     this.core.emit("netStats", { fps: Math.round(fps), rtt: rtt != null ? Math.round(rtt * 1000) : null });
+
+    // Loss report for the host's adaptive quality ladder, once per ~5s window.
+    this.statsPolls += 1;
+    if (!this.lossBase) {
+      this.lossBase = { lost, received };
+    } else if (this.statsPolls % 5 === 0) {
+      const dLost = Math.max(0, lost - this.lossBase.lost);
+      const dReceived = Math.max(0, received - this.lossBase.received);
+      this.lossBase = { lost, received };
+      const total = dLost + dReceived;
+      if (total > 0) {
+        const lossPct = (dLost / total) * 100;
+        this.core.send({ type: "video-stats", lossPct, rttMs: rtt != null ? Math.round(rtt * 1000) : undefined });
+      }
+    }
   }
 
   private wireDataChannel(dc: RTCDataChannel): void {

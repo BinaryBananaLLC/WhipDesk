@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { DEFAULTS, type AgentKind, type MonitorAddMessage, type MonitorInfo, type ScheduledAction, type ScreenInfo, type ServerMessage, type TimerAddMessage, type TimerInfo, type WatchRegion } from "@whipdesk/protocol";
+import { safeEqual } from "./transport/session";
 import { AGENT_VERSION, loadConfig, type AgentConfig } from "./config";
 import { ScreenCapturer, isFullViewport, type Viewport } from "./capture/screen";
 import { listDisplayGeometry, type DisplayGeometry } from "./capture/displays";
@@ -22,6 +23,7 @@ import { videoEncodingAvailable, VideoHub } from "./capture/encoder";
 import { SessionMonitor } from "./monitor/monitor";
 import { loadAlwaysAgents, saveAlwaysAgents } from "./monitor/always-store";
 import { isPackaged } from "./util/paths";
+import { announceUpdate, checkForUpdate } from "./util/update-check";
 import { log } from "./logger";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -81,6 +83,8 @@ export interface AgentContext {
   /** Turn "always alert" mode on/off for an agent kind (persisted across restarts). */
   setAlwaysAgent(agent: AgentKind, enabled: boolean): void;
   listAlwaysAgents(): AgentKind[];
+  /** Client-reported video link stats; drives the encoder's adaptive quality ladder. */
+  reportVideoStats(lossPct: number, rttMs?: number): void;
 }
 
 export async function startAgent(): Promise<{ server: Server; config: AgentConfig; presence: Presence; keepAwake: KeepAwake; ctx: AgentContext }> {
@@ -132,6 +136,18 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
 
   const controllers = new Set<Controller>();
   let fps = config.fps;
+
+  // Adaptive quality ladder: the client reports getStats loss every few seconds; sustained loss
+  // steps the encoder down IMMEDIATELY (each step is a cheap restart — the RTP restamper keeps the
+  // stream continuous), and 30s of a clean link steps back up one rung. Reset when the room empties.
+  const QUALITY_LADDER = [
+    { kbps: DEFAULTS.VIDEO_KBPS, fps: DEFAULTS.VIDEO_FPS },
+    { kbps: Math.round(DEFAULTS.VIDEO_KBPS / 2), fps: 24 },
+    { kbps: Math.round(DEFAULTS.VIDEO_KBPS / 4), fps: 15 },
+    { kbps: Math.round(DEFAULTS.VIDEO_KBPS / 8), fps: 10 },
+  ] as const;
+  let ladderLevel = 0;
+  let ladderCleanSince = 0;
 
   // Zero-config AI-agent session monitor: detects running agents (Claude Code, Codex, Gemini,
   // Aider, …) by observing processes + their transcripts, infers state, and pings once when an agent
@@ -309,6 +325,15 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
 
   const updatePresence = () => presence.update(controllers.size);
 
+  // Nobody is actually looking (every connected controller's tab is hidden): stop the H.264
+  // encoder — no host CPU or bandwidth for frames no one sees. Region watchers and session
+  // monitors are deliberately untouched: they run on their own samplers, so auto-whip alerts
+  // keep firing with the phone in your pocket. Resuming restarts the capture (fresh IDR).
+  const recomputeVideoPause = () => {
+    const anyVisible = controllers.size === 0 || [...controllers].some((c) => c.visible);
+    video?.setPaused(!anyVisible && controllers.size > 0);
+  };
+
   const ctx: AgentContext = {
     config,
     capturer,
@@ -334,6 +359,7 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       for (const c of controllers) c.send({ type: "presence", watchers: controllers.size });
       controller.send({ type: "watchers", regions: regionWatcher.list() });
       updatePresence();
+      recomputeVideoPause();
     },
     removeController(controller) {
       controllers.delete(controller);
@@ -342,14 +368,46 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       if (controllers.size === 0) displayWake.setActive(false);
       for (const c of controllers) c.send({ type: "presence", watchers: controllers.size });
       updatePresence();
-      // Last controller gone: reset the shared crop so the NEXT session starts on the full screen.
-      if (controllers.size === 0 && !isFullViewport(viewport)) {
-        viewport = { x: 0, y: 0, w: 1, h: 1 };
-        video?.setViewport(null);
+      // Last controller gone: reset the shared crop so the NEXT session starts on the full screen,
+      // and reset the quality ladder — the next viewer's link starts at full quality.
+      if (controllers.size === 0) {
+        if (!isFullViewport(viewport)) {
+          viewport = { x: 0, y: 0, w: 1, h: 1 };
+          video?.setViewport(null);
+        }
+        if (ladderLevel !== 0) {
+          ladderLevel = 0;
+          ladderCleanSince = 0;
+          video?.setQuality(QUALITY_LADDER[0].kbps, QUALITY_LADDER[0].fps);
+        }
       }
+      recomputeVideoPause();
     },
     setVisibility(controller, visible) {
       controller.visible = visible;
+      recomputeVideoPause();
+    },
+    reportVideoStats(lossPct) {
+      if (!video || !Number.isFinite(lossPct)) return;
+      const now = Date.now();
+      if (lossPct > 5 && ladderLevel < QUALITY_LADDER.length - 1) {
+        ladderLevel += 1;
+        ladderCleanSince = 0;
+        const q = QUALITY_LADDER[ladderLevel]!;
+        video.setQuality(q.kbps, q.fps);
+        log.info(`video: link loss ${lossPct.toFixed(1)}% — quality ladder down to ${q.kbps}kbps@${q.fps}fps`);
+      } else if (lossPct < 1) {
+        if (!ladderCleanSince) ladderCleanSince = now;
+        if (ladderLevel > 0 && now - ladderCleanSince > 30_000) {
+          ladderLevel -= 1;
+          ladderCleanSince = now;
+          const q = QUALITY_LADDER[ladderLevel]!;
+          video.setQuality(q.kbps, q.fps);
+          log.info(`video: link clean — quality ladder up to ${q.kbps}kbps@${q.fps}fps`);
+        }
+      } else {
+        ladderCleanSince = 0;
+      }
     },
     setFps(next) {
       fps = Math.min(30, Math.max(1, Math.round(next)));
@@ -459,7 +517,19 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     res.json(hub.getRecent());
   });
 
+  // Local write-endpoints require the pairing token (Bearer). Anything on the LAN can reach this
+  // port; without the check, any LAN peer could spoof "agent finished" notifications. Callers on
+  // this machine read the token from <stateDir>/token (see scripts/notify.mjs, docs/HOOKS.md).
+  const requireToken = (req: express.Request, res: express.Response): boolean => {
+    const header = req.headers.authorization ?? "";
+    const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    if (bearer && safeEqual(bearer, config.token)) return true;
+    res.status(401).json({ ok: false, error: "missing or invalid token (Authorization: Bearer <pairing token>)" });
+    return false;
+  };
+
   app.post("/api/notify", (req, res) => {
+    if (!requireToken(req, res)) return;
     const { title, body, level, source } = (req.body ?? {}) as Record<string, unknown>;
     if (typeof title !== "string" || !title.trim()) {
       res.status(400).json({ ok: false, error: "title (string) required" });
@@ -474,9 +544,34 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     res.json({ ok: true, id: notification.id });
   });
 
+  // Precision mode for session monitoring: agent-native hooks (e.g. Claude Code's Stop/Notification
+  // hooks) POST here the moment a turn ends or input is needed — an exact signal, no inference
+  // delay. Optional: zero-config process+transcript observation keeps working without it.
+  // See docs/HOOKS.md for the settings snippet.
+  app.post("/api/agent-event", (req, res) => {
+    if (!requireToken(req, res)) return;
+    const { agent, event, cwd } = (req.body ?? {}) as Record<string, unknown>;
+    const kinds: AgentKind[] = ["claude", "codex", "gemini", "aider", "copilot", "opencode", "cursor", "amp"];
+    if (typeof agent !== "string" || !kinds.includes(agent as AgentKind)) {
+      res.status(400).json({ ok: false, error: `agent must be one of: ${kinds.join(", ")}` });
+      return;
+    }
+    if (event !== "working" && event !== "stopped") {
+      res.status(400).json({ ok: false, error: 'event must be "working" or "stopped"' });
+      return;
+    }
+    const matched = monitor.recordAgentEvent(agent as AgentKind, event, typeof cwd === "string" ? cwd : undefined);
+    if (!matched) {
+      res.status(404).json({ ok: false, error: "no live monitored session for that agent (is a monitor or always-alert mode active?)" });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
   if (existsSync(webDist)) {
     app.use(express.static(webDist));
-    app.get("*", (_req, res) => res.sendFile(join(webDist, "index.html")));
+    // Express 5: bare "*" is no longer a valid route path — wildcards must be named.
+    app.get("/*splat", (_req, res) => res.sendFile(join(webDist, "index.html")));
   } else {
     log.warn(`mobile-web build not found at ${webDist} — run "npm run build:web"`);
     app.get("/", (_req, res) =>
@@ -494,6 +589,12 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   await new Promise<void>((resolve) => server.listen(config.port, resolve));
   presence.start();
   if (config.keepAwake) keepAwake.start();
+  // Packaged agents get a one-shot "update available" notice (source checkouts update via git).
+  if (isPackaged()) {
+    void checkForUpdate(AGENT_VERSION).then((latest) => {
+      if (latest) announceUpdate(latest, AGENT_VERSION, (n) => hub.emit(n));
+    });
+  }
   log.info(`listening on :${config.port} (capture: ${capturer.backend}, input: ${input.name})`);
   log.info(pin.isSet ? "connection PIN: required" : "connection PIN: NONE (set one in a terminal)");
   return { server, config, presence, keepAwake, ctx };

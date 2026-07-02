@@ -2,6 +2,9 @@
 
 > Control your desktop — and the AI coding agents running on it — from any phone browser.
 
+[![CI](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/BinaryBananaLLC/WhipDesk)](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/BinaryBananaLLC/WhipDesk/badge)](https://scorecard.dev/viewer/?uri=github.com/BinaryBananaLLC/WhipDesk)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 
@@ -10,20 +13,36 @@ move the mouse, type, paste prompts into your AI tools, and get a push notificat
 long-running build or agent job finishes — no app store install, no kernel extension, no agent
 running on your phone.
 
-It's peer-to-peer: on your LAN it's a plain WebSocket; over the internet it's an encrypted
-WebRTC connection that talks **directly** between phone and desktop. The cloud only brokers the
-initial handshake — your screen and keystrokes never flow through anyone else's server.
+Because it's **screen-level**, it works with *every* AI agent — Claude Code and Codex in a
+terminal, Copilot Chat inside VS Code, Cursor, a browser tab running tests — with **no wrappers
+and no hooks required**: you never change how you launch your tools. CLI-wrapper apps only see
+the one agent they wrap; WhipDesk sees your actual desktop.
+
+It's peer-to-peer: an encrypted WebRTC connection that talks **directly** between phone and
+desktop, on your LAN or across the internet. The cloud only brokers the initial handshake — your
+screen and keystrokes never flow through anyone else's server.
 
 ## Features
 
-- **Live screen** — full desktop or magnified, pannable region, streamed as H.264 (WebRTC) or
-  JPEG (LAN).
+- **Live screen, tuned for mobile data** — direct H.264, hardware-encoded. When you zoom, the
+  host **re-crops the encode to just your phone's viewport**, so a magnified terminal costs a
+  fraction of the bandwidth of streaming the whole desktop — full-desktop streamers (RustDesk,
+  Parsec, Chrome Remote Desktop) always ship every pixel. A quality ladder steps the bitrate
+  down automatically on a lossy cellular link, and encoding pauses entirely while your phone's
+  screen is off.
+- **AI-agent monitoring (auto-whips)** — the host detects running agents (Claude Code, Codex,
+  Gemini CLI, Aider, Copilot — including Copilot Chat inside VS Code — opencode, Cursor, Amp) by
+  observing processes and transcripts, and pings your phone the moment one stops working: waiting
+  on you, finished, or crashed. Zero config; optional [agent-native hooks](docs/HOOKS.md) make the
+  alert instant.
 - **Full input** — mouse, touch, and keyboard injected into the real OS; built for poking at
   AI agents and CLIs from your couch.
-- **Job-done notifications** — a webhook (`POST /api/notify`) or an opt-in file watcher fires a
-  notification when a slow task completes; optional background push to a closed PWA via FCM.
-- **Private by design** — DTLS-encrypted P2P media, a per-session PIN gate on top, and a pairing
-  token. Secrets stay on your machine.
+- **Job-done notifications** — a token-authenticated webhook (`POST /api/notify`) or an opt-in
+  file watcher fires a notification when a slow task completes; optional background push to a
+  closed PWA via FCM.
+- **Private by design** — DTLS-encrypted P2P media, a PIN challenge on **every** connection (the
+  PIN itself never crosses the wire), a pairing token underneath, and persistent brute-force
+  lockout. Secrets stay on your machine. See [SECURITY.md](SECURITY.md) for the threat model.
 - **No account needed on LAN** — cloud (remote access, device dashboard) is strictly opt-in.
 
 ## Quick start (macOS)
@@ -113,12 +132,13 @@ If capture is genuinely blocked, the agent also logs step-by-step help and pushe
 
 A **desktop agent** (Node) captures the screen, injects input, and serves the **web controller**
 (a framework-light vanilla-TS PWA). They speak one message contract
-([`packages/protocol`](packages/protocol)) over a swappable transport:
+([`packages/protocol`](packages/protocol)) over WebRTC — one DataChannel for control plus H.264
+video tracks, all DTLS-encrypted — with two ways to broker the handshake:
 
-- **LAN** — WebSocket. Binary frames are JPEG, text frames are JSON.
-- **Remote** — WebRTC: one DataChannel for control plus an H.264 video track, all DTLS-encrypted.
-  Firebase Realtime Database swaps a single SDP offer/answer; STUN connects directly, with
-  ephemeral-credential TURN as a fallback.
+- **LAN** — the agent's own WebSocket swaps the SDP offer/answer; the media flows host-to-host
+  on your network, touching nothing else.
+- **Remote** — Firebase Realtime Database swaps the SDP; STUN connects directly, with
+  ephemeral-credential TURN as a last-resort relay.
 
 Every session goes through the same gate: pairing token → PIN challenge → only then does the
 screen start. Pointer coordinates travel normalized to `[0,1]`, so control is resolution- and
@@ -148,6 +168,7 @@ apps/desktop-agent/      Node host: capture, input, server, watchers, cloud
 apps/mobile-web/         Vite PWA controller, served by the agent
 scripts/                 notify.mjs + smoke-test harnesses
 docs/ARCHITECTURE.md     Design rationale
+docs/HOOKS.md            Optional agent-native hooks for instant monitoring alerts
 ```
 
 ## Contributing
@@ -157,7 +178,7 @@ AI coding agents (where each change goes, the wire-contract-first rule, how to v
 
 ```bash
 npm run typecheck    # tsc --noEmit across workspaces
-npm run test         # node --test (pin, crypto, protocol contract)
+npm run test         # node --test (auth handshake, pin, monitor states, crypto, protocol contract)
 ```
 
 ## Security
