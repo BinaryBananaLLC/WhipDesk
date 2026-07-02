@@ -1,4 +1,5 @@
 import type {
+  AgentKind,
   ClientMessage,
   MonitorInfo,
   MonitorSessionInfo,
@@ -42,8 +43,17 @@ export interface ControllerEvents {
   timers: TimerInfo[];
   /** Active session monitors (the host's authoritative list). */
   monitors: MonitorInfo[];
+  /** Agent kinds with "always alert" mode on (persisted host-side). */
+  monitorAlways: AgentKind[];
   /** Live AI-agent sessions discovered by the host (reply to a scan). */
   monitorSessions: MonitorSessionInfo[];
+  /**
+   * The connected agent speaks a different wire protocol than this (always-fresh) client — i.e. the
+   * agent build is out of step. Emitted once per welcome; the UI nudges the user to update the agent.
+   * This is the deliberate "no backward-compat" lever: bump PROTOCOL_VERSION on breaking changes
+   * instead of carrying shims.
+   */
+  versionMismatch: { agentProtocol: number; clientProtocol: number; agentVersion?: string };
   error: string;
 }
 
@@ -89,8 +99,10 @@ export class ControllerCore {
     watchers: new Set(),
     timers: new Set(),
     monitors: new Set(),
+    monitorAlways: new Set(),
     monitorSessions: new Set(),
     netStats: new Set(),
+    versionMismatch: new Set(),
     error: new Set(),
   };
   private sender: (text: string) => void = () => {};
@@ -158,9 +170,17 @@ export class ControllerCore {
     switch (message.type) {
       case "welcome":
         this.challenge = null;
+        if (message.protocol !== PROTOCOL_VERSION) {
+          this.emit("versionMismatch", {
+            agentProtocol: message.protocol,
+            clientProtocol: PROTOCOL_VERSION,
+            agentVersion: message.agent?.version,
+          });
+        }
         this.emit("welcome", message);
         this.emit("timers", message.timers ?? []);
         this.emit("monitors", message.monitors ?? []);
+        this.emit("monitorAlways", message.alwaysAgents ?? []);
         break;
       case "auth-required":
         this.challenge = { salt: message.salt, iterations: message.iterations, nonce: message.nonce };
@@ -194,6 +214,9 @@ export class ControllerCore {
         break;
       case "monitors":
         this.emit("monitors", message.monitors);
+        break;
+      case "monitor-always-agents":
+        this.emit("monitorAlways", message.agents);
         break;
       case "monitor-sessions":
         this.emit("monitorSessions", message.sessions);

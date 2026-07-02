@@ -170,6 +170,7 @@ async function start(): Promise<void> {
       conn.send({ type: "set-viewport", x: 0, y: 0, w: 1, h: 1 });
     }
   });
+  conn.on("versionMismatch", (m) => showAgentOutdatedBanner(m.agentVersion));
   conn.on("pinRequired", (req) => {
     connecting.hide();
     pinPrompt.show(req, (pin) => conn.submitPin(pin));
@@ -193,6 +194,9 @@ async function start(): Promise<void> {
     monitorCount = monitors.length;
     watchers.setMonitors(monitors);
     refreshAlertCount();
+  });
+  conn.on("monitorAlways", (agents) => {
+    watchers.setAlwaysAgents(agents);
   });
   // The host echoes which region the track is now cropped to; null/full = whole desktop. The
   // REQUESTED echo updates the minimap/target immediately; the ACTIVE echo (sent once the new crop's
@@ -277,4 +281,33 @@ function el(tag: string, className: string): HTMLElement {
   const node = document.createElement(tag);
   node.className = className;
   return node;
+}
+
+/**
+ * Persistent nudge shown when the connected agent speaks an older wire protocol than this
+ * (always-fresh) client — i.e. the local agent build is behind. Self-contained (inline styles,
+ * de-duped by id) so it works on both the LAN and remote paths without touching the app chrome.
+ */
+function showAgentOutdatedBanner(agentVersion?: string): void {
+  const id = "wd-outdated-banner";
+  if (document.getElementById(id)) return;
+  const bar = document.createElement("div");
+  bar.id = id;
+  bar.style.cssText =
+    "position:fixed;top:0;left:0;right:0;z-index:9999;background:#7a2e00;color:#fff;" +
+    "font:14px/1.4 system-ui,sans-serif;padding:10px 40px 10px 14px;text-align:center;" +
+    "box-shadow:0 2px 8px rgba(0,0,0,.35)";
+  const ver = agentVersion ? ` (agent ${agentVersion})` : "";
+  bar.innerHTML =
+    `⚠️ This WhipDesk agent${ver} is out of date. ` +
+    `Update from <a style="color:#ffd9a6" href="https://github.com/BinaryBananaLLC/WhipDesk/releases/latest" ` +
+    `target="_blank" rel="noreferrer noopener">the latest release</a> or run <code>npm i -g whipdesk@latest</code>.`;
+  const close = document.createElement("button");
+  close.textContent = "✕";
+  close.setAttribute("aria-label", "Dismiss");
+  close.style.cssText =
+    "position:absolute;right:8px;top:6px;background:none;border:none;color:#fff;font-size:16px;cursor:pointer";
+  close.onclick = () => bar.remove();
+  bar.appendChild(close);
+  document.body.appendChild(bar);
 }

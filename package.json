@@ -18,7 +18,7 @@
     "apps/*"
   ],
   "scripts": {
-    "whipdesk": "npm run start --workspace @whipdesk/desktop-agent --",
+    "whipdesk": "npm run start --workspace whipdesk --",
     "dev": "npm run build:web && npm run whipdesk",
     "build:web": "npm run build --workspace @whipdesk/mobile-web",
     "typecheck": "npm run typecheck --workspaces --if-present",

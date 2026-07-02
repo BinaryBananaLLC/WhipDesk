@@ -1,15 +1,22 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULTS } from "@whipdesk/protocol";
+import { isPackaged } from "./util/paths";
 
-export const AGENT_VERSION = "0.1.0";
+// Single source of truth, generated from package.json (scripts/sync-version.mjs). Re-exported here
+// because callers (index.ts, cloud registry) already import it from "./config".
+export { AGENT_VERSION } from "./version";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // apps/desktop-agent/src -> repo root
 const repoRoot = join(here, "..", "..", "..");
-const stateDir = join(repoRoot, ".whipdesk");
+// A source checkout keeps state in the repo (.whipdesk, gitignored). A distributed build (SEA
+// download or `npm i -g`) has no source tree, so state lives in the user's home — this also means
+// pairing token / PIN / cloud identity SURVIVE an update, which is what lets us skip backward-compat.
+const stateDir = isPackaged() ? join(homedir(), ".whipdesk") : join(repoRoot, ".whipdesk");
 
 export interface AgentConfig {
   port: number;

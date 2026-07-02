@@ -1,4 +1,4 @@
-import type { AgentKind, MonitorEvent, MonitorInfo, MonitorSessionInfo, ScheduledAction, TimerInfo, WatchRegion } from "@whipdesk/protocol";
+import type { AgentKind, MonitorInfo, MonitorSessionInfo, ScheduledAction, TimerInfo, WatchRegion } from "@whipdesk/protocol";
 import type { ControllerTransport } from "./core";
 import type { Notifications } from "./notifications";
 import type { ScreenView } from "./screen";
@@ -81,7 +81,11 @@ export class RegionWatchers {
   private timers: TimerInfo[] = [];
   private monitors: MonitorInfo[] = [];
   private monitorSessions: MonitorSessionInfo[] = [];
+  /** Agent kinds with "always alert" mode on (host-persisted); drives the per-kind toggle. */
+  private alwaysAgents = new Set<AgentKind>();
   private renderPicker: (() => void) | null = null;
+  /** Re-renders the always-on toggle in the open monitor dialog when the host's set changes. */
+  private renderAlways: (() => void) | null = null;
   private countdownTimer = 0;
   private readonly overlay: HTMLElement; // dialog
   private readonly list: HTMLElement;
@@ -123,7 +127,7 @@ export class RegionWatchers {
     const li3 = el("li");
     li3.append(
       el("strong", undefined, "Session Monitoring"),
-      document.createTextNode(" — pick a running AI session and get notified when the agent is blocked, idle, finished, or has a question."),
+      document.createTextNode(" — pick a running AI session and get pinged the moment the agent stops working (it's waiting on you or has gone idle)."),
     );
     ul.append(li1, li2, li3);
     const note = el(
@@ -175,6 +179,11 @@ export class RegionWatchers {
   setMonitors(monitors: MonitorInfo[]): void {
     this.monitors = monitors;
     this.renderList();
+  }
+
+  setAlwaysAgents(agents: AgentKind[]): void {
+    this.alwaysAgents = new Set(agents);
+    this.renderAlways?.(); // reflect the change in the open monitor dialog, if any
   }
 
   open(): void {
@@ -615,7 +624,7 @@ export class RegionWatchers {
   /**
    * Monitor a running AI session (Claude Code, Codex, Gemini, Aider, …). Zero-config: the host
    * discovers sessions by observing processes — nothing to install or launch differently. Pick one
-   * and choose which state changes ping you.
+   * to get pinged when it stops working, or flip "always alert" on for the whole agent kind.
    */
   private beginMonitor(): void {
     this.close();
@@ -623,6 +632,7 @@ export class RegionWatchers {
     const overlay = el("div", "wd-dialog-overlay");
     const dismiss = () => {
       this.renderPicker = null;
+      this.renderAlways = null;
       overlay.remove();
       this.open(); // back to the Auto-Whips list
     };
@@ -640,7 +650,7 @@ export class RegionWatchers {
     const help = el(
       "p",
       "wd-dialog-help",
-      "Pick a running AI session to watch. WhipDesk finds them automatically — no setup, no wrappers. You'll be notified when its state changes.",
+      "Pick a running AI session to watch. WhipDesk finds them automatically — no setup, no wrappers. You'll get one ping the moment the agent stops working (it's waiting on you or has gone idle).",
     );
 
     const pickHead = el("div", "wd-mon-pick-head");
@@ -651,13 +661,13 @@ export class RegionWatchers {
 
     const listWrap = el("div", "wd-mon-pick");
     let selectedKey = "";
-    const events: Record<MonitorEvent, boolean> = { blocked: true, idle: false, finished: true, crashed: true };
 
     const renderSessions = () => {
       listWrap.replaceChildren();
       if (this.monitorSessions.length === 0) {
         selectedKey = "";
         syncAdd();
+        renderAlways();
         listWrap.appendChild(
           el("p", "wd-dialog-help", "No AI sessions detected yet. Start Claude Code, Codex, Gemini, or Aider, then Rescan."),
         );
@@ -685,28 +695,45 @@ export class RegionWatchers {
         listWrap.appendChild(item);
       }
       syncAdd();
+      renderAlways();
     };
     this.renderPicker = renderSessions;
 
-    const evRow = el("div", "wd-form-row");
-    evRow.appendChild(el("label", "wd-form-label", "Notify me when"));
-    const evWrap = el("div", "wd-mon-events");
-    const evLabels: Array<[MonitorEvent, string]> = [
-      ["blocked", "Blocked / needs me"],
-      ["idle", "Idle"],
-      ["finished", "Finished"],
-      ["crashed", "Crashed"],
-    ];
-    for (const [ev, text] of evLabels) {
+    // "Always alert" is per agent KIND, controlled here where the agent is chosen. It's bound to the
+    // selected session's kind and persists host-side, so it keeps alerting across restarts.
+    const alwaysRow = el("div", "wd-form-row");
+    alwaysRow.appendChild(el("label", "wd-form-label", "Always alert me"));
+    const alwaysWrap = el("div", "wd-mon-always");
+    alwaysRow.appendChild(alwaysWrap);
+    const renderAlways = () => {
+      alwaysWrap.replaceChildren();
+      const session = this.monitorSessions.find((s) => s.key === selectedKey);
+      if (!session) {
+        alwaysWrap.appendChild(el("p", "wd-dialog-help", "Pick a session above to always alert for its agent."));
+        return;
+      }
+      const kind = session.agent;
       const lab = el("label", "wd-check");
       const cb = el("input");
       cb.type = "checkbox";
-      cb.checked = events[ev];
-      cb.onchange = () => (events[ev] = cb.checked);
-      lab.append(cb, document.createTextNode(text));
-      evWrap.appendChild(lab);
-    }
-    evRow.appendChild(evWrap);
+      cb.checked = this.alwaysAgents.has(kind);
+      cb.onchange = () => {
+        // Optimistic; the host echoes `monitor-always-agents` to reconcile.
+        if (cb.checked) this.alwaysAgents.add(kind);
+        else this.alwaysAgents.delete(kind);
+        this.conn.send({ type: "monitor-always", agent: kind, enabled: cb.checked });
+        if (cb.checked && this.notifications.permission === "default") void this.requestNotifications();
+        renderAlways();
+      };
+      const txt = el("span", "wd-check-text");
+      txt.append(
+        document.createTextNode(`Always monitor every ${agentName(kind)} session`),
+        el("span", "wd-check-sub", "Keeps alerting across agent and WhipDesk restarts — no need to re-add it."),
+      );
+      lab.append(cb, txt);
+      alwaysWrap.appendChild(lab);
+    };
+    this.renderAlways = renderAlways;
 
     const bar = el("div", "wd-dialog-actions");
     const cancel = el("button", "wd-btn");
@@ -719,18 +746,13 @@ export class RegionWatchers {
     add.onclick = () => {
       const session = this.monitorSessions.find((s) => s.key === selectedKey);
       if (!session) return;
-      const chosen = (Object.keys(events) as MonitorEvent[]).filter((k) => events[k]);
-      if (chosen.length === 0) {
-        this.notifications.flash("Pick an event", "Choose at least one state to be notified about.", "warning");
-        return;
-      }
       const id = uid();
       const label = session.title;
-      this.conn.send({ type: "monitor-add", id, key: session.key, agent: session.agent, label, events: chosen });
+      this.conn.send({ type: "monitor-add", id, key: session.key, agent: session.agent, label });
       // Optimistic: show it at once; the host's `monitors` broadcast reconciles.
       this.monitors = [
         ...this.monitors,
-        { id, key: session.key, agent: session.agent, label, events: chosen, state: session.state, live: true },
+        { id, key: session.key, agent: session.agent, label, state: session.state, live: true },
       ];
       if (this.notifications.permission === "default") void this.requestNotifications();
       this.notifications.flash("Monitoring started", `Watching ${agentName(session.agent)} · ${label}.`, "success");
@@ -738,7 +760,7 @@ export class RegionWatchers {
     };
     bar.append(cancel, add);
 
-    card.append(head, help, pickHead, listWrap, evRow, bar);
+    card.append(head, help, pickHead, listWrap, alwaysRow, bar);
     overlay.appendChild(card);
     this.root.appendChild(overlay);
 

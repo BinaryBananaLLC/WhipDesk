@@ -1,11 +1,5 @@
 import { basename } from "node:path";
-import type {
-  AgentKind,
-  MonitorEvent,
-  MonitorInfo,
-  MonitorSessionInfo,
-  MonitorState,
-} from "@whipdesk/protocol";
+import type { AgentKind, MonitorInfo, MonitorSessionInfo, MonitorState } from "@whipdesk/protocol";
 import { log } from "../logger";
 import { agentLabel, matchAgent } from "./agents";
 import { listProcesses, processCwd, type ProcInfo } from "./processes";
@@ -31,9 +25,12 @@ interface Watch {
   key: string;
   agent: AgentKind;
   label: string;
-  events: Set<MonitorEvent>;
   state: MonitorState;
   live: boolean;
+  /** True for watches created implicitly by "always alert" mode (one per always-on agent kind's
+   * live session). Auto-watches are driven by `alwaysAgents`, not shown in the monitors list, and
+   * torn down with the session — the user manages them via the per-kind toggle, not individually. */
+  auto: boolean;
 }
 
 export interface MonitorCallbacks {
@@ -43,18 +40,22 @@ export interface MonitorCallbacks {
 }
 
 const POLL_MS = 3000;
-const EVENT_STATES = new Set<MonitorState>(["blocked", "idle", "finished", "crashed"]);
+// Everything that isn't "working" (and isn't the initial "unknown") counts as "not working".
+const NOT_WORKING = new Set<MonitorState>(["blocked", "idle", "finished", "crashed"]);
 
 /**
  * Zero-config AI-agent session monitor. It periodically lists processes, matches known agents,
- * resolves each one's state from CPU + transcript activity, and fires the events a user subscribed
- * to. No wrappers, hooks, or changes to how agents are launched — it only observes. The poll loop
- * runs solely while at least one monitor is active.
+ * resolves each one's state from CPU + transcript activity, and fires a SINGLE kind of alert — the
+ * agent stopped working (it's waiting on you or has gone idle/exited). No wrappers, hooks, or changes
+ * to how agents are launched — it only observes. The poll loop runs while any monitor is active OR
+ * while any agent kind has "always alert" mode on.
  */
 export class SessionMonitor {
   private readonly sessions = new Map<string, Session>();
   private readonly watches = new Map<string, Watch>();
   private readonly cwdCache = new Map<number, string>();
+  /** Agent kinds in "always alert" mode: every live session of these is auto-watched. */
+  private always = new Set<AgentKind>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private polling = false;
   private lastSignature = "";
@@ -79,29 +80,30 @@ export class SessionMonitor {
     }));
   }
 
+  /** Only user-created monitors are listed; auto-watches are surfaced via the always-on toggles. */
   listMonitors(): MonitorInfo[] {
-    return [...this.watches.values()].map((w) => ({
-      id: w.id,
-      key: w.key,
-      agent: w.agent,
-      label: w.label,
-      events: [...w.events],
-      state: w.state,
-      live: w.live,
-    }));
+    return [...this.watches.values()]
+      .filter((w) => !w.auto)
+      .map((w) => ({
+        id: w.id,
+        key: w.key,
+        agent: w.agent,
+        label: w.label,
+        state: w.state,
+        live: w.live,
+      }));
   }
 
-  addWatch(m: { id: string; key: string; agent: AgentKind; label: string; events: MonitorEvent[] }): void {
+  addWatch(m: { id: string; key: string; agent: AgentKind; label: string }): void {
     const session = this.sessions.get(m.key);
-    const events = m.events.length ? m.events : (["blocked", "finished", "crashed"] as MonitorEvent[]);
     this.watches.set(m.id, {
       id: m.id,
       key: m.key,
       agent: m.agent,
       label: m.label,
-      events: new Set(events),
       state: session?.state ?? "unknown",
       live: !!session,
+      auto: false,
     });
     this.ensureTicker();
     this.emitMonitors(true);
@@ -110,7 +112,30 @@ export class SessionMonitor {
   removeWatch(id: string): void {
     if (!this.watches.delete(id)) return;
     this.emitMonitors(true);
-    if (this.watches.size === 0) this.stop();
+    this.maybeStop();
+  }
+
+  /**
+   * Set which agent kinds are in "always alert" mode. Auto-watches for kinds no longer in the set are
+   * dropped immediately; kinds newly added get auto-watches for their live sessions on the next poll
+   * (a poll is kicked off now so it takes effect at once). Starts/stops the poll loop as needed.
+   */
+  setAlwaysAgents(agents: AgentKind[]): void {
+    this.always = new Set(agents);
+    for (const [id, w] of this.watches) {
+      if (w.auto && !this.always.has(w.agent)) this.watches.delete(id);
+    }
+    if (this.always.size > 0) {
+      this.ensureTicker();
+      void this.poll();
+    } else {
+      this.maybeStop();
+    }
+  }
+
+  /** The poll loop only needs to run while there's something to observe. */
+  private maybeStop(): void {
+    if (this.watches.size === 0 && this.always.size === 0) this.stop();
   }
 
   stop(): void {
@@ -180,6 +205,20 @@ export class SessionMonitor {
         }
         for (const w of this.watches.values()) if (w.key === key) w.live = true;
 
+        // "Always alert" mode: give every live session of an always-on kind a hidden auto-watch, so
+        // it's monitored with no per-session setup (and keeps working after a restart).
+        if (this.always.has(def.kind) && ![...this.watches.values()].some((w) => w.key === key)) {
+          this.watches.set(`auto:${key}`, {
+            id: `auto:${key}`,
+            key,
+            agent: def.kind,
+            label: s.title,
+            state: s.state,
+            live: true,
+            auto: true,
+          });
+        }
+
         const activity = await newestActivity(s.activityPaths);
         this.transition(s, inferState(s.state === "unknown" ? "idle" : s.state, {
           present: true,
@@ -194,7 +233,13 @@ export class SessionMonitor {
         if (seen.has(s.key)) continue;
         this.transition(s, inferState(s.state, { present: false, cpu: 0, subtreeCpu: 0, activityAgeMs: null }));
         this.sessions.delete(s.key);
-        for (const w of this.watches.values()) if (w.key === s.key) w.live = false;
+        // Auto-watches are recreated when a session of the kind reappears, so drop the dead one;
+        // manual watches stay (marked not-live) so the user still sees them until they remove them.
+        for (const [id, w] of this.watches) {
+          if (w.key !== s.key) continue;
+          if (w.auto) this.watches.delete(id);
+          else w.live = false;
+        }
       }
 
       this.emitMonitors(false);
@@ -229,13 +274,18 @@ export class SessionMonitor {
     s.candidate = null;
     const prev = s.state;
     s.state = next;
+    // The one and only alert: a working agent just stopped (blocked on you, idle, or exited). Going
+    // between not-working states (e.g. blocked -> idle, or idle -> exited) never re-alerts, so each
+    // "the agent stopped" episode pings exactly once.
+    const stoppedWorking = prev === "working" && NOT_WORKING.has(next);
     for (const w of this.watches.values()) {
       if (w.key !== s.key) continue;
       w.state = next;
-      if (EVENT_STATES.has(next) && w.events.has(next as MonitorEvent)) {
+      if (stoppedWorking) {
+        const where = w.label && w.label !== s.title ? `${w.label} (${s.title})` : s.title;
         this.cb.notify({
-          title: `${agentLabel(w.agent)} — ${stateText(next)}`,
-          body: w.label && w.label !== s.title ? `${w.label} (${s.title})` : s.title,
+          title: `${agentLabel(w.agent)} isn't working`,
+          body: notWorkingBody(next, where),
           level: levelFor(next),
           source: `monitor:${w.agent}`,
         });
@@ -270,20 +320,19 @@ function subtreeCpu(rootPid: number, children: Map<number, ProcInfo[]>): number 
   return max;
 }
 
-function stateText(state: MonitorState): string {
+/** Body for the "isn't working" alert, phrased for why it stopped. `where` is the session label. */
+function notWorkingBody(state: MonitorState, where: string): string {
   switch (state) {
-    case "working":
-      return "working";
     case "blocked":
-      return "needs you";
+      return `${where} — it's waiting on you.`;
     case "idle":
-      return "idle";
-    case "finished":
-      return "finished";
+      return `${where} — it's gone idle.`;
     case "crashed":
-      return "exited unexpectedly";
+      return `${where} — it stopped unexpectedly.`;
+    case "finished":
+      return `${where} — it finished.`;
     default:
-      return state;
+      return where;
   }
 }
 

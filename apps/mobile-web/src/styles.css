@@ -1006,15 +1006,15 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.wd-mon-events {
+.wd-mon-always {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
+  flex-direction: column;
+  gap: 8px;
 }
 .wd-check {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 13px;
   color: var(--text);
   cursor: pointer;
@@ -1022,7 +1022,18 @@ textarea {
 .wd-check input {
   width: 16px;
   height: 16px;
+  margin-top: 1px;
+  flex: none;
   accent-color: var(--accent);
+}
+.wd-check-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wd-check-sub {
+  font-size: 11px;
+  color: var(--muted);
 }
 .wd-form-row {
   display: flex;

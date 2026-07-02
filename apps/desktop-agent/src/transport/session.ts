@@ -197,6 +197,7 @@ function buildWelcome(ctx: AgentContext): WelcomeMessage {
     watchers: ctx.regionWatcher.list(),
     timers: ctx.listTimers(),
     monitors: ctx.listMonitors(),
+    alwaysAgents: ctx.listAlwaysAgents(),
     notifications: ctx.hub.getRecent(),
   };
 }
@@ -256,6 +257,9 @@ async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Contr
       break;
     case "monitor-remove":
       ctx.removeMonitor(msg.id);
+      break;
+    case "monitor-always":
+      ctx.setAlwaysAgent(msg.agent, msg.enabled);
       break;
     case "visibility":
       ctx.setVisibility(controller, msg.visible);

@@ -1,0 +1,68 @@
+// Bundles the agent into a single CommonJS file (dist/agent.cjs) with a `#!/usr/bin/env node`
+// shebang. Pure-JS deps are inlined; native/asset deps (EXTERNAL) stay external so they resolve
+// from node_modules at runtime — for `npm i -g whipdesk` that's the user's install; for the
+// SEA build it's the sibling resources/node_modules (see build-sea.mjs). This file is the npm `bin`
+// and is (re)built by `prepublishOnly`.
+import { spawnSync } from "node:child_process";
+import { cpSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import * as esbuild from "esbuild";
+
+// Deps kept OUT of the JS bundle — because they carry a native addon or a bundled binary/asset,
+// resolve paths via __dirname, or use legacy syntax esbuild won't inline (qrcode-terminal's octal
+// escapes). They resolve at runtime from node_modules: the user's for `npm i -g`, the sibling
+// resources/node_modules for the SEA build (see build-sea.mjs).
+export const EXTERNAL = [
+  "ffmpeg-static",
+  "screenshot-desktop",
+  "sharp",
+  "@nut-tree-fork/nut-js",
+  "werift",
+  "qrcode-terminal",
+];
+
+const agentDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = join(agentDir, "..", "..");
+
+export async function buildBundle() {
+  // Version single-source: package.json -> src/version.ts.
+  const r = spawnSync(process.execPath, ["scripts/sync-version.mjs"], { stdio: "inherit", cwd: agentDir });
+  if (r.status !== 0) throw new Error(`sync-version -> exit ${r.status}`);
+
+  // The agent serves the controller PWA over LAN, so ship the built mobile-web NEXT TO the bundle
+  // (dist/mobile-web). server.ts resolves it there in a packaged build.
+  const web = spawnSync("npm", ["run", "build", "--workspace", "@whipdesk/mobile-web"], { stdio: "inherit", cwd: repoRoot });
+  if (web.status !== 0) throw new Error(`mobile-web build -> exit ${web.status}`);
+  const webOut = join(agentDir, "dist/mobile-web");
+  rmSync(webOut, { recursive: true, force: true });
+  cpSync(join(repoRoot, "apps/mobile-web/dist"), webOut, { recursive: true });
+
+  await esbuild.build({
+    entryPoints: [join(agentDir, "src/index.ts")],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node20",
+    outfile: join(agentDir, "dist/agent.cjs"),
+    external: EXTERNAL,
+    // `import.meta.url` has no meaning in a CJS bundle (esbuild would leave it undefined), but
+    // paths.ts/optional-import.ts rely on it to anchor module resolution + detect a packaged build.
+    // Point it at the bundle file itself (CJS __filename) so createRequire resolves from the sibling
+    // node_modules — correct for both the SEA (resources/app.cjs) and npm-install layouts. Under
+    // tsx (dev, real ESM) the define doesn't apply and the native value is used.
+    banner: { js: "#!/usr/bin/env node\nconst __whipdesk_meta_url = require('url').pathToFileURL(__filename).href;" },
+    define: { "import.meta.url": "__whipdesk_meta_url" },
+    tsconfig: join(agentDir, "tsconfig.json"),
+    logLevel: "info",
+  });
+  console.log("build-bundle: dist/agent.cjs written");
+}
+
+// Run when invoked directly (npm run build:bundle / prepublishOnly).
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  buildBundle().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

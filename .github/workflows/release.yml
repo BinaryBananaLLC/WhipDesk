@@ -1,0 +1,252 @@
+name: Release
+
+# Builds, signs, provenances and uploads the desktop-agent packages — and publishes to npm —
+# ONLY when a human publishes a GitHub Release (github.com/BinaryBananaLLC/WhipDesk/releases/new).
+# Never runs per-commit. workflow_dispatch is provided for dry-run rebuilds against an existing tag.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to (re)build assets for (e.g. v1.4.0)
+        required: true
+
+permissions:
+  contents: write # upload release assets
+  id-token: write # sign attestations + npm provenance (OIDC)
+  attestations: write # actions/attest-build-provenance
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14 # Apple Silicon
+            target: macos-arm64
+            arch: arm64
+          - os: macos-13 # Intel
+            target: macos-x64
+            arch: x64
+          - os: windows-latest
+            target: windows-x64
+            arch: x64
+          - os: ubuntu-latest
+            target: linux-x64
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: npm ci
+
+      - name: Resolve version from tag
+        id: ver
+        shell: bash
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp version (single source of truth)
+        shell: bash
+        run: npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version --workspace whipdesk --allow-same-version
+
+      - name: Build SEA (bundle + embed runtime + stage native deps)
+        run: npm run build:sea --workspace whipdesk
+
+      # --- macOS: sign + .pkg + notarize + staple (all conditionals live in the bash script) ---
+      - name: Package macOS (.pkg)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          STAGE: ${{ github.workspace }}/apps/desktop-agent/dist/stage
+          OUT: ${{ github.workspace }}/dist-out
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
+          APPLE_INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          mkdir -p dist-out
+          bash apps/desktop-agent/packaging/macos-package.sh
+
+      # --- Windows: zip (attestation-only, no cert) ---
+      - name: Package Windows (.zip)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-out, dist-pkg/whipdesk | Out-Null
+          Copy-Item -Recurse -Force "apps/desktop-agent/dist/stage/*" dist-pkg/whipdesk
+          Compress-Archive -Path dist-pkg/whipdesk -DestinationPath "dist-out/whipdesk-${{ steps.ver.outputs.version }}-windows-x64.zip" -Force
+
+      # --- Linux: tar.gz ---
+      - name: Package Linux (.tar.gz)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          mkdir -p dist-out dist-pkg/whipdesk
+          cp -R apps/desktop-agent/dist/stage/. dist-pkg/whipdesk/
+          tar -C dist-pkg -czf "dist-out/whipdesk-${{ steps.ver.outputs.version }}-linux-x64.tar.gz" whipdesk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assets-${{ matrix.target }}
+          path: dist-out/*
+          if-no-files-found: error
+
+  release:
+    name: Checksums, provenance & upload
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+          pattern: assets-*
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        working-directory: staging
+        run: |
+          shasum -a 256 whipdesk-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # Integrity is anchored by SLSA build provenance (below) + published SHA256SUMS. No GPG.
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: staging/whipdesk-*
+
+      - name: Upload binaries + checksums to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
+          files: |
+            staging/whipdesk-*
+            staging/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+
+  npm-publish:
+    name: Publish to npm (provenance)
+    needs: build
+    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Stamp version
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --workspace whipdesk --allow-same-version
+      - name: Publish (prepublishOnly builds dist/agent.cjs)
+        run: npm publish --provenance --workspace whipdesk
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  homebrew:
+    name: Update Homebrew cask
+    # Points the tap's cask at the notarized .pkg of this release, so `brew install --cask whipdesk`
+    # tracks every release alongside npm. No-ops (with a warning) until the tap token is configured.
+    needs: release
+    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the tap is configured
+        id: cfg
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::HOMEBREW_TAP_TOKEN unset — skipping Homebrew cask update (see docs/RELEASING.md)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve version + macOS checksums from the release
+        if: steps.cfg.outputs.enabled == 'true'
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir .
+          ARM_SHA=$(awk -v f="whipdesk-$VERSION-macos-arm64.pkg" '$2==f{print $1}' SHA256SUMS.txt)
+          X64_SHA=$(awk -v f="whipdesk-$VERSION-macos-x64.pkg" '$2==f{print $1}' SHA256SUMS.txt)
+          if [ -z "$ARM_SHA" ] || [ -z "$X64_SHA" ]; then
+            echo "::error::macOS .pkg checksums not found in SHA256SUMS.txt"; exit 1
+          fi
+          {
+            echo "version=$VERSION"
+            echo "arm_sha=$ARM_SHA"
+            echo "x64_sha=$X64_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out the Homebrew tap
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: BinaryBananaLLC/homebrew-whipdesk
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Render + push the cask
+        if: steps.cfg.outputs.enabled == 'true'
+        working-directory: tap
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          ARM_SHA: ${{ steps.meta.outputs.arm_sha }}
+          X64_SHA: ${{ steps.meta.outputs.x64_sha }}
+        run: |
+          mkdir -p Casks
+          cat > Casks/whipdesk.rb <<RUBY
+          cask "whipdesk" do
+            arch arm: "arm64", intel: "x64"
+
+            version "$VERSION"
+            sha256 arm:   "$ARM_SHA",
+                   intel: "$X64_SHA"
+
+            url "https://github.com/BinaryBananaLLC/WhipDesk/releases/download/v#{version}/whipdesk-#{version}-macos-#{arch}.pkg"
+            name "WhipDesk"
+            desc "Remote desktop and AI-agent status alerts, controlled from a mobile browser"
+            homepage "https://whipdesk.com/"
+
+            depends_on macos: ">= :monterey"
+
+            pkg "whipdesk-#{version}-macos-#{arch}.pkg"
+
+            uninstall pkgutil: "com.binarybanana.whipdesk"
+
+            zap trash: "~/.whipdesk"
+          end
+          RUBY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/whipdesk.rb
+          if git diff --cached --quiet; then
+            echo "Cask already up to date."
+          else
+            git commit -m "whipdesk $VERSION"
+            git push
+          fi

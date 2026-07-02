@@ -1,18 +1,37 @@
 {
-  "name": "@whipdesk/desktop-agent",
+  "name": "whipdesk",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "WhipDesk desktop host: screen capture, input injection, notification hub, and the HTTP/WebSocket server that serves the mobile client.",
   "license": "AGPL-3.0",
+  "homepage": "https://github.com/BinaryBananaLLC/WhipDesk#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BinaryBananaLLC/WhipDesk.git",
+    "directory": "apps/desktop-agent"
+  },
   "bin": {
-    "whipdesk-agent": "./src/index.ts"
+    "whipdesk": "dist/agent.cjs"
+  },
+  "files": [
+    "dist/agent.cjs",
+    "dist/mobile-web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/security/pin.test.ts src/monitor/state.test.ts"
+    "test": "tsx --test src/security/pin.test.ts src/monitor/state.test.ts",
+    "build:bundle": "node scripts/build-bundle.mjs",
+    "build:sea": "node scripts/build-sea.mjs",
+    "prepublishOnly": "node scripts/build-bundle.mjs"
   },
   "dependencies": {
     "@whipdesk/protocol": "*",
@@ -32,6 +51,8 @@
     "@types/node": "^22.9.0",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/ws": "^8.5.12",
+    "esbuild": "^0.25.0",
+    "postject": "^1.0.0-alpha.6",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }

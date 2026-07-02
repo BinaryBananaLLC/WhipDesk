@@ -47,6 +47,40 @@ npm run notify -- "Build done" "tsc finished with 0 errors"
 > Tested on macOS (Apple Silicon). The capture/input stack is cross-platform, but Windows and
 > Linux hosts aren't verified yet.
 
+## Install a prebuilt agent
+
+You don't have to build from source. Every [release](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest)
+ships two ways to run the agent — both built by GitHub Actions straight from the tagged source,
+with [verifiable build provenance](docs/VERIFYING-DOWNLOADS.md):
+
+**Homebrew (macOS).**
+
+```bash
+brew install --cask BinaryBananaLLC/whipdesk/whipdesk
+whipdesk
+```
+
+**Self-contained download (no Node needed).** Grab the package for your OS:
+
+| OS | Asset | Notes |
+| --- | --- | --- |
+| macOS | `whipdesk-<ver>-macos-arm64.pkg` / `-x64.pkg` | Signed with a Developer ID & **notarized** — installs `whipdesk` to your PATH. |
+| Windows | `whipdesk-<ver>-windows-x64.zip` | Unzip and run `whipdesk.exe`. SmartScreen: **More info → Run anyway** (see verification below). |
+| Linux | `whipdesk-<ver>-linux-x64.tar.gz` | Extract and run `./whipdesk` (needs X11). |
+
+**npm (if you already have Node ≥ 20):**
+
+```bash
+npm install -g whipdesk
+whipdesk
+```
+
+The npm package is published with [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
+(the verified badge on npmjs.com links back to the exact build).
+
+Prebuilt agents keep their pairing/PIN state in `~/.whipdesk`, so updates don't re-pair you.
+**Always verify a download before running it** — see [docs/VERIFYING-DOWNLOADS.md](docs/VERIFYING-DOWNLOADS.md).
+
 ## Setup & permissions (troubleshooting)
 
 The agent prints a short reminder for your OS at startup. If the screen shows only your wallpaper,

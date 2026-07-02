@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { DEFAULTS, type MonitorAddMessage, type MonitorInfo, type ScheduledAction, type ScreenInfo, type ServerMessage, type TimerAddMessage, type TimerInfo, type WatchRegion } from "@whipdesk/protocol";
+import { DEFAULTS, type AgentKind, type MonitorAddMessage, type MonitorInfo, type ScheduledAction, type ScreenInfo, type ServerMessage, type TimerAddMessage, type TimerInfo, type WatchRegion } from "@whipdesk/protocol";
 import { AGENT_VERSION, loadConfig, type AgentConfig } from "./config";
 import { ScreenCapturer, isFullViewport, type Viewport } from "./capture/screen";
 import { listDisplayGeometry, type DisplayGeometry } from "./capture/displays";
@@ -20,11 +20,15 @@ import { attachWebSocket } from "./transport/websocket";
 import { startFileWatcher } from "./watchers/file-pattern";
 import { videoEncodingAvailable, VideoHub } from "./capture/encoder";
 import { SessionMonitor } from "./monitor/monitor";
+import { loadAlwaysAgents, saveAlwaysAgents } from "./monitor/always-store";
+import { isPackaged } from "./util/paths";
 import { log } from "./logger";
 
 const here = dirname(fileURLToPath(import.meta.url));
-// apps/desktop-agent/src -> apps/mobile-web/dist
-const webDist = join(here, "..", "..", "mobile-web", "dist");
+// Source checkout: apps/desktop-agent/src -> apps/mobile-web/dist. Distributed build: the
+// controller PWA ships NEXT TO the bundle (resources/mobile-web for SEA, dist/mobile-web for npm),
+// staged there by scripts/build-bundle.mjs.
+const webDist = isPackaged() ? join(here, "mobile-web") : join(here, "..", "..", "mobile-web", "dist");
 
 /** A connected controller. Both transports (WebSocket + WebRTC) implement this. */
 export interface Controller {
@@ -70,10 +74,13 @@ export interface AgentContext {
   listTimers(): TimerInfo[];
   /** (Re)scan for running AI-agent sessions and push the list to controllers. */
   scanMonitors(): Promise<void>;
-  /** Start monitoring a discovered session for the chosen state changes. */
+  /** Start monitoring a discovered session; it pings once when the agent stops working. */
   addMonitor(msg: MonitorAddMessage): void;
   removeMonitor(id: string): void;
   listMonitors(): MonitorInfo[];
+  /** Turn "always alert" mode on/off for an agent kind (persisted across restarts). */
+  setAlwaysAgent(agent: AgentKind, enabled: boolean): void;
+  listAlwaysAgents(): AgentKind[];
 }
 
 export async function startAgent(): Promise<{ server: Server; config: AgentConfig; presence: Presence; keepAwake: KeepAwake; ctx: AgentContext }> {
@@ -127,14 +134,18 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   let fps = config.fps;
 
   // Zero-config AI-agent session monitor: detects running agents (Claude Code, Codex, Gemini,
-  // Aider, …) by observing processes + their transcripts, infers state, and fires the events a user
-  // subscribed to (it polls only while a monitor is active).
+  // Aider, …) by observing processes + their transcripts, infers state, and pings once when an agent
+  // stops working. It polls while any monitor is active OR any kind is in "always alert" mode.
   const monitor = new SessionMonitor({
     notify: (n) => hub.emit(n),
     onMonitors: (monitors) => {
       for (const c of controllers) c.send({ type: "monitors", monitors });
     },
   });
+  // "Always alert" agent kinds persist in the state dir, so background monitoring resumes at startup
+  // — notifications keep coming even after the agent or WhipDesk itself is restarted.
+  const alwaysAgents = new Set<AgentKind>(loadAlwaysAgents(config.stateDir));
+  monitor.setAlwaysAgents([...alwaysAgents]);
 
   // When the last set-viewport re-crop was requested, so we can log how long the host took to make
   // that region LIVE (the variable we replaced the controller's blind 500ms region-bridge timer with).
@@ -411,13 +422,24 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       for (const c of controllers) c.send(msg);
     },
     addMonitor(msg) {
-      monitor.addWatch({ id: msg.id, key: msg.key, agent: msg.agent, label: msg.label, events: msg.events });
+      monitor.addWatch({ id: msg.id, key: msg.key, agent: msg.agent, label: msg.label });
     },
     removeMonitor(id) {
       monitor.removeWatch(id);
     },
     listMonitors() {
       return monitor.listMonitors();
+    },
+    setAlwaysAgent(agent, enabled) {
+      if (enabled) alwaysAgents.add(agent);
+      else alwaysAgents.delete(agent);
+      saveAlwaysAgents(config.stateDir, [...alwaysAgents]);
+      monitor.setAlwaysAgents([...alwaysAgents]);
+      const msg: ServerMessage = { type: "monitor-always-agents", agents: [...alwaysAgents] };
+      for (const c of controllers) c.send(msg);
+    },
+    listAlwaysAgents() {
+      return [...alwaysAgents];
     },
   };
 

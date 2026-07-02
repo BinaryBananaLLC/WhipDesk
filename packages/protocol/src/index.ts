@@ -88,9 +88,6 @@ export type AgentKind =
 /** Inferred run state of a monitored agent session. */
 export type MonitorState = "working" | "blocked" | "idle" | "finished" | "crashed" | "unknown";
 
-/** State changes a user can be notified about (working is the all-good baseline, not an alert). */
-export type MonitorEvent = "blocked" | "idle" | "finished" | "crashed";
-
 /** A live AI-agent session the host discovered by observing processes (no wrappers/hooks). */
 export interface MonitorSessionInfo {
   /** Stable key (agent + project/tty) so a watch survives the process restarting. */
@@ -104,13 +101,15 @@ export interface MonitorSessionInfo {
   watched?: boolean;
 }
 
-/** An active session-monitoring auto-whip: which session, and which events to be pinged on. */
+/**
+ * An active session-monitoring auto-whip. There is a single notification behaviour: you're pinged
+ * when the agent stops working — it's waiting on you (a question) or has gone idle/exited.
+ */
 export interface MonitorInfo {
   id: string;
   key: string;
   agent: AgentKind;
   label: string;
-  events: MonitorEvent[];
   state: MonitorState;
   /** False once the watched session is no longer running. */
   live: boolean;
@@ -268,20 +267,30 @@ export interface MonitorScanMessage {
   type: "monitor-scan";
 }
 
-/** Start monitoring a discovered session and pick which state changes fire a notification. */
+/** Start monitoring a discovered session. Fires once when the agent stops working. */
 export interface MonitorAddMessage {
   type: "monitor-add";
   id: string;
   key: string;
   agent: AgentKind;
   label: string;
-  events: MonitorEvent[];
 }
 
 /** Stop a session monitor by id. */
 export interface MonitorRemoveMessage {
   type: "monitor-remove";
   id: string;
+}
+
+/**
+ * Turn the "always alert" mode on/off for a whole agent kind. When enabled, the host monitors every
+ * running session of that kind and pings you when it stops working — persisted, so it keeps working
+ * across agent and WhipDesk restarts with no need to re-add a monitor.
+ */
+export interface MonitorAlwaysMessage {
+  type: "monitor-always";
+  agent: AgentKind;
+  enabled: boolean;
 }
 
 export interface PingMessage {
@@ -308,6 +317,7 @@ export type ClientMessage =
   | MonitorScanMessage
   | MonitorAddMessage
   | MonitorRemoveMessage
+  | MonitorAlwaysMessage
   | PingMessage;
 
 // ---------------------------------------------------------------------------
@@ -358,6 +368,8 @@ export interface WelcomeMessage {
   timers: TimerInfo[];
   /** Active session monitors. */
   monitors: MonitorInfo[];
+  /** Agent kinds with "always alert" mode enabled (persisted across restarts). */
+  alwaysAgents: AgentKind[];
   /** Recent notifications so a freshly connected client has context. */
   notifications: NotificationMessage[];
 }
@@ -394,6 +406,12 @@ export interface MonitorSessionsMessage {
 export interface MonitorsMessage {
   type: "monitors";
   monitors: MonitorInfo[];
+}
+
+/** The agent kinds with "always alert" mode on (sent when a toggle changes). */
+export interface MonitorAlwaysAgentsMessage {
+  type: "monitor-always-agents";
+  agents: AgentKind[];
 }
 
 /** Sent when the logical screen size changes (resolution / display switch). */
@@ -487,6 +505,7 @@ export type ServerMessage =
   | TimersMessage
   | MonitorSessionsMessage
   | MonitorsMessage
+  | MonitorAlwaysAgentsMessage
   | NotificationMessage
   | PongMessage
   | ErrorMessage;
