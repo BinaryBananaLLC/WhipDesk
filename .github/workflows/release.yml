@@ -27,10 +27,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14 # Apple Silicon
+          # macos-15+, NOT macos-14: Sonoma's codesign produces a signature for the postject'd SEA
+          # binary that passes local `codesign --verify` but the notary rejects as invalid. Newer
+          # macOS toolchains sign it correctly (verified end-to-end locally against the real certs).
+          - os: macos-15 # Apple Silicon
             target: macos-arm64
             arch: arm64
-          - os: macos-13 # Intel
+          - os: macos-13 # Intel (oldest free Intel runner; see note in RELEASING.md re: x64 notarization)
             target: macos-x64
             arch: x64
           - os: windows-latest

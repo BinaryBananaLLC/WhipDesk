@@ -47,6 +47,16 @@ Integrity is anchored by **SLSA build-provenance attestations** + the published 
 Windows is intentionally **attestation-only** (no code-signing cert) — see the trust story in
 [VERIFYING-DOWNLOADS.md](VERIFYING-DOWNLOADS.md).
 
+### macOS notarization toolchain
+
+The arm64 build must run on **`macos-15` or newer**, not `macos-14`. `macos-14`'s (Sonoma) `codesign`
+signs the postject'd SEA binary such that it passes local `codesign --verify` but the notary rejects
+it with *"The signature of the binary is invalid."* Newer toolchains sign it correctly (verified
+end-to-end locally against the real Developer ID certs). The x64 build still runs on `macos-13` (the
+only free Intel runner). If x64 notarization hits the same signature rejection, the options are: cut
+Intel over to the npm/Homebrew path only, or cross-build the x64 SEA on `macos-15` — the arm64 `.pkg`
+is the primary artifact.
+
 ## Homebrew tap setup (one-time)
 
 `brew install --cask whipdesk` is served from a separate **tap** repo. To enable the automatic
