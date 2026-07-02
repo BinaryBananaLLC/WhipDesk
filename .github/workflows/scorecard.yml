@@ -1,0 +1,35 @@
+name: OpenSSF Scorecard
+
+# Supply-chain health score, published so the README badge and deps.dev stay current.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 8 * * 2"
+  branch_protection_rule:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload SARIF to code scanning
+      id-token: write # publish results (OIDC)
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+        with:
+          sarif_file: results.sarif

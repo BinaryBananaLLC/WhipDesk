@@ -34,7 +34,9 @@ jobs:
           - os: macos-15 # Apple Silicon
             target: macos-arm64
             arch: arm64
-          - os: macos-13 # Intel (oldest free Intel runner)
+          # macos-13 was retired by GitHub (jobs queue forever waiting for a runner);
+          # macos-15-intel is the supported Intel image (available into 2027).
+          - os: macos-15-intel # Intel
             target: macos-x64
             arch: x64
           - os: windows-latest
@@ -43,13 +45,16 @@ jobs:
           - os: ubuntu-latest
             target: linux-x64
             arch: x64
+          - os: ubuntu-24.04-arm # free arm64 runner for public repos
+            target: linux-arm64
+            arch: arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -111,7 +116,51 @@ jobs:
           mkdir -p dist-out
           bash apps/desktop-agent/packaging/macos-package.sh
 
-      # --- Windows: zip (attestation-only, no cert) ---
+      # --- Windows: authenticode-sign the exe via SignPath (free for OSS), then zip. Skipped with
+      # a warning until the SignPath secrets are configured (see docs/RELEASING.md) — the zip still
+      # ships with SLSA provenance either way. Signing removes the SmartScreen "unknown publisher"
+      # friction that scares users off an unsigned download.
+      - name: Check SignPath is configured (Windows)
+        if: matrix.os == 'windows-latest'
+        id: signcfg
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORG_ID: ${{ secrets.SIGNPATH_ORG_ID }}
+        run: |
+          if [ -n "$SIGNPATH_API_TOKEN" ] && [ -n "$SIGNPATH_ORG_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::SIGNPATH_API_TOKEN / SIGNPATH_ORG_ID unset — shipping an unsigned Windows exe (see docs/RELEASING.md)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload unsigned exe for signing
+        if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
+        id: unsigned
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-unsigned
+          path: apps/desktop-agent/dist/stage/whipdesk.exe
+          if-no-files-found: error
+
+      - name: Submit SignPath signing request
+        if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
+        uses: signpath/github-action-submit-signing-request@4f13d373e8f0cd8d3c0465ff4877feff27aed2ae # v1.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORG_ID }}
+          project-slug: whipdesk
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Replace exe with the signed one
+        if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
+        shell: pwsh
+        run: Copy-Item -Force "signed/whipdesk.exe" "apps/desktop-agent/dist/stage/whipdesk.exe"
+
       - name: Package Windows (.zip)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -120,16 +169,16 @@ jobs:
           Copy-Item -Recurse -Force "apps/desktop-agent/dist/stage/*" dist-pkg/whipdesk
           Compress-Archive -Path dist-pkg/whipdesk -DestinationPath "dist-out/whipdesk-${{ steps.ver.outputs.version }}-windows-x64.zip" -Force
 
-      # --- Linux: tar.gz ---
+      # --- Linux: tar.gz (x64 + arm64 legs share this step) ---
       - name: Package Linux (.tar.gz)
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         shell: bash
         run: |
           mkdir -p dist-out dist-pkg/whipdesk
           cp -R apps/desktop-agent/dist/stage/. dist-pkg/whipdesk/
-          tar -C dist-pkg -czf "dist-out/whipdesk-${{ steps.ver.outputs.version }}-linux-x64.tar.gz" whipdesk
+          tar -C dist-pkg -czf "dist-out/whipdesk-${{ steps.ver.outputs.version }}-${{ matrix.target }}.tar.gz" whipdesk
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: assets-${{ matrix.target }}
           path: dist-out/*
@@ -140,7 +189,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: staging
           pattern: assets-*
@@ -154,12 +203,12 @@ jobs:
 
       # Integrity is anchored by SLSA build provenance (below) + published SHA256SUMS. No GPG.
       - name: Attest build provenance (SLSA)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: staging/whipdesk-*
 
       - name: Upload binaries + checksums to the release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
         with:
           tag_name: ${{ github.event.release.tag_name || inputs.tag }}
           files: |
@@ -173,10 +222,10 @@ jobs:
     if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event.release.tag_name }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: https://registry.npmjs.org
@@ -230,7 +279,7 @@ jobs:
 
       - name: Check out the Homebrew tap
         if: steps.cfg.outputs.enabled == 'true'
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           repository: BinaryBananaLLC/homebrew-whipdesk
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -272,6 +321,126 @@ jobs:
           git add Casks/whipdesk.rb
           if git diff --cached --quiet; then
             echo "Cask already up to date."
+          else
+            git commit -m "whipdesk $VERSION"
+            git push
+          fi
+
+  winget:
+    name: Update winget manifest
+    # Publishes the Windows zip as a winget "portable" package (BinaryBanana.WhipDesk) via a PR to
+    # microsoft/winget-pkgs. Needs WINGET_TOKEN (a classic PAT with public_repo on a fork of
+    # winget-pkgs) — no-ops with a warning until configured. The FIRST version must be submitted
+    # manually with `wingetcreate new` (see docs/RELEASING.md); this job automates every update.
+    needs: release
+    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    runs-on: windows-latest
+    steps:
+      - name: Check winget is configured
+        id: cfg
+        shell: bash
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -n "$WINGET_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::WINGET_TOKEN unset — skipping winget manifest update (see docs/RELEASING.md)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish with winget-releaser
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
+        with:
+          identifier: BinaryBanana.WhipDesk
+          installers-regex: 'whipdesk-.*-windows-x64\.zip$'
+          token: ${{ secrets.WINGET_TOKEN }}
+
+  scoop:
+    name: Update Scoop bucket
+    # Mirrors the Homebrew job for Windows devs: renders the manifest into
+    # BinaryBananaLLC/scoop-whipdesk so `scoop bucket add whipdesk ...; scoop install whipdesk`
+    # tracks every release. No-ops with a warning until SCOOP_TAP_TOKEN is configured.
+    needs: release
+    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the bucket is configured
+        id: cfg
+        env:
+          SCOOP_TAP_TOKEN: ${{ secrets.SCOOP_TAP_TOKEN }}
+        run: |
+          if [ -n "$SCOOP_TAP_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::SCOOP_TAP_TOKEN unset — skipping Scoop bucket update (see docs/RELEASING.md)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve version + Windows checksum from the release
+        if: steps.cfg.outputs.enabled == 'true'
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir .
+          WIN_SHA=$(awk -v f="whipdesk-$VERSION-windows-x64.zip" '$2==f{print $1}' SHA256SUMS.txt)
+          if [ -z "$WIN_SHA" ]; then
+            echo "::error::Windows zip checksum not found in SHA256SUMS.txt"; exit 1
+          fi
+          {
+            echo "version=$VERSION"
+            echo "win_sha=$WIN_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out the Scoop bucket
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: BinaryBananaLLC/scoop-whipdesk
+          token: ${{ secrets.SCOOP_TAP_TOKEN }}
+          path: bucket
+
+      - name: Render + push the manifest
+        if: steps.cfg.outputs.enabled == 'true'
+        working-directory: bucket
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          WIN_SHA: ${{ steps.meta.outputs.win_sha }}
+        run: |
+          mkdir -p bucket
+          cat > bucket/whipdesk.json <<JSON
+          {
+            "version": "$VERSION",
+            "description": "Remote desktop and AI-agent status alerts, controlled from a mobile browser",
+            "homepage": "https://whipdesk.com/",
+            "license": "AGPL-3.0",
+            "architecture": {
+              "64bit": {
+                "url": "https://github.com/BinaryBananaLLC/WhipDesk/releases/download/v$VERSION/whipdesk-$VERSION-windows-x64.zip",
+                "hash": "$WIN_SHA",
+                "extract_dir": "whipdesk"
+              }
+            },
+            "bin": "whipdesk.exe",
+            "checkver": { "github": "https://github.com/BinaryBananaLLC/WhipDesk" },
+            "autoupdate": {
+              "architecture": {
+                "64bit": {
+                  "url": "https://github.com/BinaryBananaLLC/WhipDesk/releases/download/v\$version/whipdesk-\$version-windows-x64.zip"
+                }
+              }
+            }
+          }
+          JSON
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/whipdesk.json
+          if git diff --cached --quiet; then
+            echo "Manifest already up to date."
           else
             git commit -m "whipdesk $VERSION"
             git push

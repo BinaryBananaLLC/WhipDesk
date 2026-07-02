@@ -1,0 +1,65 @@
+name: CI
+
+# Runs on every PR and push to main: typecheck + unit tests (incl. the auth-handshake
+# integration test) on all three host platforms, both build pipelines, and a production-deps
+# vulnerability audit. Actions are pinned by commit SHA (supply-chain hygiene).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: npm ci
+
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck
+
+      - name: Unit + integration tests
+        run: npm test
+
+      - name: Build web controller (Vite)
+        run: npm run build:web
+
+      - name: Build agent bundle (esbuild)
+        run: npm run build:bundle --workspace whipdesk
+
+  audit:
+    name: npm audit (production deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: npm ci
+
+      # Hard gate: the REQUIRED production deps must be clean. Optional deps (werift, nut-js)
+      # carry upstream advisories with no fixed release (e.g. `ip` via werift-ice) — those are
+      # reported below without failing the build, and Dependabot picks up fixes when they ship.
+      - name: Audit required production dependencies (gate)
+        run: npm audit --omit=dev --omit=optional --audit-level=high
+
+      - name: Audit all dependencies (report only)
+        run: npm audit || true
