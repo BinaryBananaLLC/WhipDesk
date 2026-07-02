@@ -85,7 +85,23 @@ fi
 # 5) Notarize + staple (offline Gatekeeper approval; works for .pkg).
 if [[ -n "${APPLE_API_KEY:-}" && -n "${APPLE_API_KEY_ID:-}" && -n "${APPLE_API_ISSUER:-}" ]]; then
   echo "$APPLE_API_KEY" | base64 --decode > "$TMP/AuthKey.p8"
-  xcrun notarytool submit "$PKG" --key "$TMP/AuthKey.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+  NOTARY=(--key "$TMP/AuthKey.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
+  # `submit --wait` returns 0 even when Apple rejects the package (status: Invalid), so inspect the
+  # status ourselves and ALWAYS print the notary log — that log is the ONLY place Apple explains the
+  # per-file reason ("hardened runtime missing", "SDK too old", …). Without it, stapler just fails
+  # later with a useless "Record not found".
+  SUB_JSON="$(xcrun notarytool submit "$PKG" "${NOTARY[@]}" --output-format json --wait)"
+  echo "$SUB_JSON"
+  SUB_ID="$(printf '%s' "$SUB_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+  SUB_STATUS="$(printf '%s' "$SUB_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+  if [[ -n "$SUB_ID" ]]; then
+    echo "----- Apple notary log ($SUB_ID) -----"
+    xcrun notarytool log "$SUB_ID" "${NOTARY[@]}" || true
+  fi
+  if [[ "$SUB_STATUS" != "Accepted" ]]; then
+    echo "::error::Notarization status '$SUB_STATUS' — see the notary log above for the exact reason."
+    exit 1
+  fi
   xcrun stapler staple "$PKG"
   xcrun stapler validate "$PKG"
 else
