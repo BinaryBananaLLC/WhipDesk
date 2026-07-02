@@ -58,6 +58,23 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Immutable releases seal on publish AND burn the tag name forever (deleting the release does
+      # NOT free it). If someone already published a release for this tag — e.g. by creating it in
+      # the GitHub UI, which is also what pushes the tag — no assets can ever be attached and the tag
+      # is unrecoverable. Fail HERE, before 5 platform builds, with instructions, instead of failing
+      # cryptically at the upload step. A leftover DRAFT (from a run that died mid-release) is fine:
+      # the release job updates it in place.
+      - name: Guard - tag must not already have a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.r.outputs.tag }}
+        run: |
+          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.draft' 2>/dev/null || echo "none")
+          if [ "$draft" = "false" ]; then
+            echo "::error::A release for $TAG is ALREADY PUBLISHED (immutable: assets can never be added, and even after deletion the tag name '$TAG' can never host a release again). Bump the version and push a fresh tag: git tag vNEXT && git push origin vNEXT. Never create releases from the GitHub UI — this workflow creates and publishes the release itself."
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.target }}
     needs: resolve
