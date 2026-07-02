@@ -15,7 +15,8 @@
   },
   "files": [
     "dist/agent.cjs",
-    "dist/mobile-web"
+    "dist/mobile-web",
+    "README.md"
   ],
   "engines": {
     "node": ">=20"

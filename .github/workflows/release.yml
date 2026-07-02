@@ -1,19 +1,27 @@
 name: Release
 
-# Builds, signs, provenances and uploads the desktop-agent packages — and publishes to npm —
-# ONLY when a human publishes a GitHub Release (github.com/BinaryBananaLLC/WhipDesk/releases/new).
-# Never runs per-commit. workflow_dispatch is provided for dry-run rebuilds against an existing tag.
+# Builds, signs, provenances the desktop-agent packages, then creates the GitHub Release with the
+# assets ATTACHED and publishes to npm/brew/scoop/winget. Triggered by pushing a version tag
+# (`git tag v1.4.0 && git push origin v1.4.0`). Never runs per-commit. workflow_dispatch rebuilds
+# an existing tag.
+#
+# Why a tag trigger and not "release: published"? GitHub's IMMUTABLE RELEASES seals a release the
+# moment it is published — you can no longer add assets. So the release must be created as a DRAFT,
+# have every asset attached, and only THEN be flipped to published. That means CI has to own release
+# creation; a human clicking "Publish" in the UI first would seal an empty release. Release notes are
+# auto-generated (`generate_release_notes`); the body stays editable after publish if you want to
+# refine them — only the tag + assets are frozen.
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to (re)build assets for (e.g. v1.4.0)
+        description: Existing tag to build + release (e.g. v1.4.0)
         required: true
 
 permissions:
-  contents: write # upload release assets
+  contents: write # create the release + upload assets
   id-token: write # sign attestations + npm provenance (OIDC)
   attestations: write # actions/attest-build-provenance
 
@@ -21,8 +29,38 @@ env:
   NODE_VERSION: "24"
 
 jobs:
+  resolve:
+    name: Resolve tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.r.outputs.tag }}
+      version: ${{ steps.r.outputs.version }}
+      prerelease: ${{ steps.r.outputs.prerelease }}
+    steps:
+      - id: r
+        shell: bash
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          VER="${TAG#v}"
+          # Fail fast on a malformed tag (e.g. "v.0.0.3" -> ".0.0.3") instead of a cryptic
+          # `npm error Invalid version` deep in the build. Tags must be vMAJOR.MINOR.PATCH[-suffix].
+          if ! printf '%s' "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-+.].*)?$'; then
+            echo "::error::Tag '$TAG' is not vX.Y.Z (parsed version '$VER'). Re-tag as e.g. v0.0.3."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          # A pre-release semver (contains a hyphen, e.g. v1.2.3-rc.1) builds + publishes the GitHub
+          # release only — it skips npm/brew/scoop/winget, mirroring the old "Set as pre-release" tick.
+          if printf '%s' "$VER" | grep -q '-'; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: Build ${{ matrix.target }}
+    needs: resolve
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ needs.resolve.outputs.tag }}
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
@@ -60,23 +98,9 @@ jobs:
 
       - run: npm ci
 
-      - name: Resolve version from tag
-        id: ver
-        shell: bash
-        run: |
-          TAG="${{ github.event.release.tag_name || inputs.tag }}"
-          VER="${TAG#v}"
-          # Fail fast on a malformed tag (e.g. "v.0.0.3" -> ".0.0.3") instead of a cryptic
-          # `npm error Invalid version` deep in the build. Tags must be vMAJOR.MINOR.PATCH.
-          if ! printf '%s' "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-+.].*)?$'; then
-            echo "::error::Tag '$TAG' is not vX.Y.Z (parsed version '$VER'). Re-tag as e.g. v0.0.3."
-            exit 1
-          fi
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-
       - name: Stamp version (single source of truth)
         shell: bash
-        run: npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version --workspace whipdesk --allow-same-version
+        run: npm version "${{ needs.resolve.outputs.version }}" --no-git-tag-version --workspace whipdesk --allow-same-version
 
       - name: Build SEA (bundle + embed runtime + stage native deps)
         run: npm run build:sea --workspace whipdesk
@@ -101,7 +125,7 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         shell: bash
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.resolve.outputs.version }}
           ARCH: ${{ matrix.arch }}
           STAGE: ${{ github.workspace }}/apps/desktop-agent/dist/stage
           OUT: ${{ github.workspace }}/dist-out
@@ -167,7 +191,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist-out, dist-pkg/whipdesk | Out-Null
           Copy-Item -Recurse -Force "apps/desktop-agent/dist/stage/*" dist-pkg/whipdesk
-          Compress-Archive -Path dist-pkg/whipdesk -DestinationPath "dist-out/whipdesk-${{ steps.ver.outputs.version }}-windows-x64.zip" -Force
+          Compress-Archive -Path dist-pkg/whipdesk -DestinationPath "dist-out/whipdesk-${{ needs.resolve.outputs.version }}-windows-x64.zip" -Force
 
       # --- Linux: tar.gz (x64 + arm64 legs share this step) ---
       - name: Package Linux (.tar.gz)
@@ -176,7 +200,7 @@ jobs:
         run: |
           mkdir -p dist-out dist-pkg/whipdesk
           cp -R apps/desktop-agent/dist/stage/. dist-pkg/whipdesk/
-          tar -C dist-pkg -czf "dist-out/whipdesk-${{ steps.ver.outputs.version }}-${{ matrix.target }}.tar.gz" whipdesk
+          tar -C dist-pkg -czf "dist-out/whipdesk-${{ needs.resolve.outputs.version }}-${{ matrix.target }}.tar.gz" whipdesk
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -185,8 +209,8 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Checksums, provenance & upload
-    needs: build
+    name: Checksums, provenance & release
+    needs: [resolve, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -207,31 +231,43 @@ jobs:
         with:
           subject-path: staging/whipdesk-*
 
-      - name: Upload binaries + checksums to the release
+      # Immutable releases seal a release on publish, so assets MUST be attached while it is still a
+      # draft. Create/update the draft with every asset, then flip it to published in the next step.
+      - name: Create draft release with assets
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
         with:
-          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          draft: true # published explicitly below, AFTER assets are attached
+          prerelease: ${{ needs.resolve.outputs.prerelease }}
+          generate_release_notes: true
           files: |
             staging/whipdesk-*
             staging/SHA256SUMS.txt
           fail_on_unmatched_files: true
 
+      # Seal it: the assets are now attached, so publishing produces a complete immutable release.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
   npm-publish:
     name: Publish to npm (provenance)
-    needs: build
-    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    needs: [resolve, release]
+    if: ${{ needs.resolve.outputs.prerelease == 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ needs.resolve.outputs.tag }}
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - name: Stamp version
-        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --workspace whipdesk --allow-same-version
+        run: npm version "${{ needs.resolve.outputs.version }}" --no-git-tag-version --workspace whipdesk --allow-same-version
       - name: Publish (prepublishOnly builds dist/agent.cjs)
         run: npm publish --provenance --workspace whipdesk
         env:
@@ -241,8 +277,8 @@ jobs:
     name: Update Homebrew cask
     # Points the tap's cask at the notarized .pkg of this release, so `brew install --cask whipdesk`
     # tracks every release alongside npm. No-ops (with a warning) until the tap token is configured.
-    needs: release
-    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    needs: [resolve, release]
+    if: ${{ needs.resolve.outputs.prerelease == 'false' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check the tap is configured
@@ -262,7 +298,7 @@ jobs:
         id: meta
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           VERSION="${TAG#v}"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir .
@@ -332,8 +368,8 @@ jobs:
     # microsoft/winget-pkgs. Needs WINGET_TOKEN (a classic PAT with public_repo on a fork of
     # winget-pkgs) — no-ops with a warning until configured. The FIRST version must be submitted
     # manually with `wingetcreate new` (see docs/RELEASING.md); this job automates every update.
-    needs: release
-    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    needs: [resolve, release]
+    if: ${{ needs.resolve.outputs.prerelease == 'false' }}
     runs-on: windows-latest
     steps:
       - name: Check winget is configured
@@ -354,6 +390,7 @@ jobs:
         uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
         with:
           identifier: BinaryBanana.WhipDesk
+          release-tag: ${{ needs.resolve.outputs.tag }}
           installers-regex: 'whipdesk-.*-windows-x64\.zip$'
           token: ${{ secrets.WINGET_TOKEN }}
 
@@ -362,8 +399,8 @@ jobs:
     # Mirrors the Homebrew job for Windows devs: renders the manifest into
     # BinaryBananaLLC/scoop-whipdesk so `scoop bucket add whipdesk ...; scoop install whipdesk`
     # tracks every release. No-ops with a warning until SCOOP_TAP_TOKEN is configured.
-    needs: release
-    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    needs: [resolve, release]
+    if: ${{ needs.resolve.outputs.prerelease == 'false' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check the bucket is configured
@@ -383,7 +420,7 @@ jobs:
         id: meta
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           VERSION="${TAG#v}"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir .

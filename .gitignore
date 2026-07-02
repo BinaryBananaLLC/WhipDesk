@@ -6,6 +6,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Generated at build time (mirrors the repo-root README onto the npm package) — see build-bundle.mjs
+apps/desktop-agent/README.md
+
 # Local runtime state (token, pairing data) — never commit
 .whipdesk/
 
