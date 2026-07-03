@@ -286,6 +286,44 @@ jobs:
           TAG: ${{ needs.resolve.outputs.tag }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
 
+  sync-version:
+    name: Commit version bump back to the branch
+    # The build/publish jobs stamp package.json to the tag's version IN THE RUNNER only, so the
+    # checked-in version drifts behind the released one (e.g. repo says 0.1.0 after v0.1.1 shipped)
+    # — and an agent run from source then reports an old version, which the whipdesk.com dashboard
+    # flags as "update available". After a successful release, write the released version back to
+    # the branch the tag was cut from (package.json + lockfile + src/version.ts) so the repo, npm,
+    # and the release tag all agree. GITHUB_TOKEN pushes don't re-trigger this workflow (it only
+    # fires on v* tags / manual dispatch), so there is no loop.
+    needs: [resolve, release]
+    if: ${{ needs.resolve.outputs.prerelease == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          # Dispatch runs know the branch the tag was cut from; tag pushes fall back to the default.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || github.event.repository.default_branch }}
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Stamp version + regenerate version.ts + lockfile
+        run: |
+          npm version "${{ needs.resolve.outputs.version }}" --no-git-tag-version --workspace whipdesk --allow-same-version
+          npm install --package-lock-only --ignore-scripts
+          node apps/desktop-agent/scripts/sync-version.mjs
+      - name: Commit + push if anything changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json apps/desktop-agent/package.json apps/desktop-agent/src/version.ts
+          if git diff --cached --quiet; then
+            echo "Repo already at ${{ needs.resolve.outputs.version }} — nothing to commit."
+          else
+            git commit -m "chore: sync version to ${{ needs.resolve.outputs.tag }} [skip ci]"
+            git pull --rebase
+            git push
+          fi
+
   npm-publish:
     name: Publish to npm (provenance)
     needs: [resolve, release]
@@ -347,22 +385,22 @@ jobs:
             echo "x64_sha=$X64_SHA"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Check out the Homebrew tap
-        if: steps.cfg.outputs.enabled == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          repository: BinaryBananaLLC/homebrew-whipdesk
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: tap
-
       - name: Render + push the cask
         if: steps.cfg.outputs.enabled == 'true'
-        working-directory: tap
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           ARM_SHA: ${{ steps.meta.outputs.arm_sha }}
           X64_SHA: ${{ steps.meta.outputs.x64_sha }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          set -euo pipefail
+          # A brand-new tap repo has NO commits, so actions/checkout (and any default-branch checkout)
+          # dies with "couldn't find remote ref refs/heads/main" (git exit 128) — which is exactly how
+          # this job failed. Clone by hand instead: an empty clone is fine, and we create `main`
+          # locally when it's missing, so the FIRST release bootstraps the tap and later ones update it.
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/BinaryBananaLLC/homebrew-whipdesk.git" tap
+          cd tap
+          git checkout main 2>/dev/null || git checkout -b main
           mkdir -p Casks
           cat > Casks/whipdesk.rb <<RUBY
           cask "whipdesk" do
@@ -389,11 +427,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Casks/whipdesk.rb
-          if git diff --cached --quiet; then
+          if git rev-parse HEAD >/dev/null 2>&1 && git diff --cached --quiet; then
             echo "Cask already up to date."
           else
             git commit -m "whipdesk $VERSION"
-            git push
+            git push -u origin main
           fi
 
   winget:
@@ -467,21 +505,20 @@ jobs:
             echo "win_sha=$WIN_SHA"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Check out the Scoop bucket
-        if: steps.cfg.outputs.enabled == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          repository: BinaryBananaLLC/scoop-whipdesk
-          token: ${{ secrets.SCOOP_TAP_TOKEN }}
-          path: bucket
-
       - name: Render + push the manifest
         if: steps.cfg.outputs.enabled == 'true'
-        working-directory: bucket
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           WIN_SHA: ${{ steps.meta.outputs.win_sha }}
+          SCOOP_TAP_TOKEN: ${{ secrets.SCOOP_TAP_TOKEN }}
         run: |
+          set -euo pipefail
+          # Same empty-repo guard as the Homebrew job: a fresh bucket repo has no `main` ref, so
+          # actions/checkout dies with "couldn't find remote ref refs/heads/main" (git exit 128).
+          # Clone by hand (empty is fine) and create `main` when missing so the first release bootstraps it.
+          git clone "https://x-access-token:${SCOOP_TAP_TOKEN}@github.com/BinaryBananaLLC/scoop-whipdesk.git" bucket
+          cd bucket
+          git checkout main 2>/dev/null || git checkout -b main
           mkdir -p bucket
           cat > bucket/whipdesk.json <<JSON
           {
@@ -510,9 +547,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add bucket/whipdesk.json
-          if git diff --cached --quiet; then
+          if git rev-parse HEAD >/dev/null 2>&1 && git diff --cached --quiet; then
             echo "Manifest already up to date."
           else
             git commit -m "whipdesk $VERSION"
-            git push
+            git push -u origin main
           fi

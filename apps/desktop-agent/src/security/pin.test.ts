@@ -25,14 +25,14 @@ test("PinGuard accepts the right response and rejects wrong/empty ones", () => {
   const dir = mkdtempSync(join(tmpdir(), "wd-pin-"));
   try {
     const guard = PinGuard.load(dir);
-    guard.setPin("4242");
+    guard.setPin("424242");
     assert.equal(guard.isSet, true);
 
-    const key = stretch("4242", guard.salt, guard.iterations);
+    const key = stretch("424242", guard.salt, guard.iterations);
     const nonce = guard.issueNonce();
     assert.equal(guard.verify(nonce, responseFor(key, nonce)), true);
 
-    const wrong = stretch("0000", guard.salt, guard.iterations);
+    const wrong = stretch("000000", guard.salt, guard.iterations);
     assert.equal(guard.verify(nonce, responseFor(wrong, nonce)), false);
     assert.equal(guard.verify(nonce, ""), false);
   } finally {

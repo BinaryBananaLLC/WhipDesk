@@ -213,6 +213,14 @@ export async function answerWebRtcOffer(
   pc.connectionStateChange.subscribe((s: string) => {
     if (s === "failed" || s === "closed" || s === "disconnected") teardown();
   });
+  // A controller that vanishes without a clean close (page refresh, tab kill, network drop) is
+  // detected by werift's ICE consent-freshness checks (RFC 7675) — but that only moves the ICE
+  // state to "disconnected" and stops there; `connectionStateChange` (DTLS-level) never fires and
+  // werift never recovers the pair. Without this subscription the dead session would be counted as
+  // a viewer forever (the "Viewers goes up on every refresh" bug).
+  pc.iceConnectionStateChange.subscribe((s: string) => {
+    if (s === "failed" || s === "closed" || s === "disconnected") teardown();
+  });
 
   await pc.setRemoteDescription({ type: "offer", sdp: offerSdp });
 

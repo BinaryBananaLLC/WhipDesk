@@ -1,4 +1,4 @@
-import whipMark from "./assets/whip.png";
+import loadingAnim from "./assets/loading-whip-anim.gif";
 
 /**
  * Full-screen "connecting…" overlay shown during the initial handshake — before the PIN prompt
@@ -29,20 +29,19 @@ export class ConnectingOverlay {
     const card = document.createElement("div");
     card.className = "wd-connecting-card";
 
+    // The animated whip gif IS the loading animation (replaces the CSS-swung static icon and the
+    // spinner). Its frames sit on a black canvas, so the overlay behind it is pure black to match.
     const whip = document.createElement("img");
-    whip.className = "wd-connecting-whip";
-    whip.src = whipMark;
+    whip.className = "wd-connecting-anim";
+    whip.src = loadingAnim;
     whip.alt = "WhipDesk";
     whip.decoding = "async";
-
-    const spinner = document.createElement("div");
-    spinner.className = "wd-connecting-spinner";
 
     this.msg = document.createElement("p");
     this.msg.className = "wd-connecting-msg";
     this.msg.textContent = MESSAGES[0]!;
 
-    card.append(whip, spinner, this.msg);
+    card.append(whip, this.msg);
     this.overlay.appendChild(card);
     root.appendChild(this.overlay);
   }

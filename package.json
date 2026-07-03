@@ -19,6 +19,7 @@
   ],
   "scripts": {
     "whipdesk": "npm run start --workspace whipdesk --",
+    "whipdesk:verbose": "npm run start --workspace whipdesk -- --verbose",
     "dev": "npm run build:web && npm run whipdesk",
     "build:web": "npm run build --workspace @whipdesk/mobile-web",
     "typecheck": "npm run typecheck --workspaces --if-present",

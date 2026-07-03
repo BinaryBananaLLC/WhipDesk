@@ -45,7 +45,7 @@ export async function ensurePin(stateDir: string): Promise<PinGuard> {
     console.log("  Set a connection PIN (>= 6 chars). Controllers must enter it to connect.");
     for (;;) {
       const pin = await ask("  New PIN: ", { mute: true });
-      // New PINs must be >= 6 chars (existing shorter PINs keep working — the reuse path above).
+      // Connection PINs must be >= 6 chars.
       if (pin.length < 6) {
         console.log("  Too short — at least 6 characters.");
         continue;

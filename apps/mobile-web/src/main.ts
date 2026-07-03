@@ -113,20 +113,95 @@ async function start(): Promise<void> {
   // True while a foreground-resume reconnect is in flight, so the status handler shows the
   // "Reconnecting…" overlay for it (ordinary mid-session blips stay silent to avoid flicker).
   let resuming = false;
-  let lastViewport = "";
+  // Last region we asked the host to crop to (null = none sent yet / full). Compared RELATIVE to its
+  // own size so a pan is re-cropped whenever it moves meaningfully for the current zoom.
+  let lastSent: { x: number; y: number; w: number; h: number } | null = null;
   let viewportTimer = 0;
   const isFullRegion = (r: { w: number; h: number }) => r.w >= 0.999 && r.h >= 0.999;
+  // Closed-loop crop sync. `set-viewport` rides a best-effort channel (silently dropped on a
+  // hiccup), so a fire-and-forget request can vanish while `lastSent` swears it was delivered —
+  // the host then keeps streaming the WRONG region and the ±tol dedup below blocks every retry
+  // until the user pans far enough away. The host echoes every region it APPLIES (screen-region);
+  // track that echo and re-send a request the host never confirmed.
+  let hostRegion: { x: number; y: number; w: number; h: number } | null = null;
+  let lastSendAt = 0;
+  let resendCount = 0;
+  // A re-crop was requested but its first sharp frame isn't live yet (no active echo). Drives the
+  // tiny "updating view…" pill so a slow/recovering encoder reads as progress, not a broken zoom.
+  let awaitingActive = false;
+  let cropAskedAt = 0;
+
+  const sharpPill = document.createElement("div");
+  sharpPill.className = "wd-sharpen hidden";
+  sharpPill.setAttribute("aria-label", "updating view");
+  app!.append(sharpPill);
+  const hideSharpPill = () => {
+    awaitingActive = false;
+    sharpPill.classList.add("hidden");
+  };
 
   const sendViewport = (r: { x: number; y: number; w: number; h: number }) => {
     // A region that covers almost the whole desktop IS the full desktop — so zooming out always
     // lands back on the uncropped screen instead of getting stuck on a near-full crop.
     const next = r.w >= 0.92 && r.h >= 0.92 ? { x: 0, y: 0, w: 1, h: 1 } : r;
-    // Quantize to ~2% so tiny pan jitter doesn't keep re-cropping (each re-crop restarts ffmpeg).
-    const q = `${next.x.toFixed(2)},${next.y.toFixed(2)},${next.w.toFixed(2)},${next.h.toFixed(2)}`;
-    if (q === lastViewport) return;
-    lastViewport = q;
+    const full = isFullRegion(next);
+    if (lastSent) {
+      if (full && isFullRegion(lastSent)) return; // already showing the whole desktop
+      if (!full) {
+        // Re-crop only when the region shifted/zoomed enough to matter RELATIVE to its own size.
+        // An absolute threshold (the old 0.01 quantize) is far too coarse when zoomed: at 8x the
+        // whole visible strip is ~0.12 wide, so a real pan rounds to "no change" and the sharp crop
+        // never follows the finger. Scaling the tolerance to the visible size fixes that while still
+        // swallowing sub-pixel jitter (each re-crop restarts ffmpeg, so we don't want to thrash it).
+        const tol = 0.08;
+        if (
+          Math.abs(next.x - lastSent.x) < next.w * tol &&
+          Math.abs(next.y - lastSent.y) < next.h * tol &&
+          Math.abs(next.w - lastSent.w) < next.w * tol &&
+          Math.abs(next.h - lastSent.h) < next.h * tol
+        )
+          return;
+      }
+    }
+    lastSent = next;
+    lastSendAt = Date.now();
+    resendCount = 0;
+    // Pending only when this actually changes the host's crop (a matching echo means nothing to
+    // wait for — e.g. the fit re-assert on connect), so the pill can't stick on a no-op request.
+    awaitingActive = !hostRegion || !regionsAgree(next, hostRegion);
+    if (awaitingActive) cropAskedAt = Date.now();
     conn.send({ type: "set-viewport", x: next.x, y: next.y, w: next.w, h: next.h });
   };
+
+  // The reconcile loop: once a second, if the host's last CONFIRMED region isn't what we asked for
+  // and our request has had time to land, ask again. A single lost/unapplied set-viewport now heals
+  // in ~1s instead of leaving the host cropping the wrong part of the screen indefinitely. Bounded
+  // retries so two controllers that genuinely disagree can't thrash the encoder forever (the count
+  // resets whenever the user pans/zooms again or the host converges).
+  const regionsAgree = (
+    a: { x: number; y: number; w: number; h: number },
+    b: { x: number; y: number; w: number; h: number },
+  ) =>
+    Math.abs(a.x - b.x) < 0.005 &&
+    Math.abs(a.y - b.y) < 0.005 &&
+    Math.abs(a.w - b.w) < 0.005 &&
+    Math.abs(a.h - b.h) < 0.005;
+  window.setInterval(() => {
+    // Show the pending pill only once a request has been outstanding >1.2s (instant re-crops never
+    // flash it) and give up after 30s (an ancient agent that never sends active echoes).
+    const waited = Date.now() - cropAskedAt;
+    sharpPill.classList.toggle("hidden", !(awaitingActive && waited > 1200 && waited < 30_000));
+    if (!lastSent || !hostRegion) return;
+    if (regionsAgree(hostRegion, lastSent)) {
+      resendCount = 0;
+      return;
+    }
+    if (Date.now() - lastSendAt < 1200) return; // request (or retry) still in flight
+    if (resendCount >= 3) return; // persistent disagreement — another controller drives; yield
+    resendCount += 1;
+    lastSendAt = Date.now();
+    conn.send({ type: "set-viewport", x: lastSent.x, y: lastSent.y, w: lastSent.w, h: lastSent.h });
+  }, 1000);
 
   // As the user zooms/pans, ask the host to crop the desktop track to just the visible region
   // (sharp, native-res). The ScreenView tracks the gesture instantly (digital zoom of the current
@@ -153,7 +228,11 @@ async function start(): Promise<void> {
     } else if (!welcomed || resuming) {
       connecting.show(welcomed ? "Reconnecting…" : undefined);
     }
-    if (s === "disconnected") lastViewport = "";
+    if (s === "disconnected") {
+      lastSent = null;
+      hostRegion = null;
+      hideSharpPill();
+    }
   });
   conn.on("transport", (t) => controls.setTransport(t));
   conn.on("welcome", (w) => {
@@ -165,9 +244,17 @@ async function start(): Promise<void> {
     controls.setWelcome(w);
     // On the FIRST connect, start at fit (1×) and clear any leftover server-side crop.
     if (firstWelcome) {
-      lastViewport = "0.000,0.000,1.000,1.000";
       view.setZoom(1);
-      conn.send({ type: "set-viewport", x: 0, y: 0, w: 1, h: 1 });
+      lastSent = null;
+      sendViewport({ x: 0, y: 0, w: 1, h: 1 });
+    } else {
+      // Session REBUILT (resume/reconnect): the host's crop is whatever ITS state says now — e.g.
+      // reset to full when we were briefly its last controller — not what we last asked for. Drop
+      // the dedup memory and re-assert the current view, otherwise a pan back into ±tol of the
+      // stale `lastSent` is swallowed as "already sent" and the sharp crop never returns.
+      lastSent = null;
+      window.clearTimeout(viewportTimer);
+      sendViewport(view.getZoom() > 1.01 ? view.getVisibleRegion() : { x: 0, y: 0, w: 1, h: 1 });
     }
   });
   conn.on("versionMismatch", (m) => showAgentOutdatedBanner(m.agentVersion));
@@ -202,6 +289,10 @@ async function start(): Promise<void> {
   // REQUESTED echo updates the minimap/target immediately; the ACTIVE echo (sent once the new crop's
   // first frame is on the wire) is when ScreenView actually moves the displayed frame onto it.
   conn.on("screenRegion", (r) => {
+    // Every echo is the host's AUTHORITATIVE crop state — the reconcile loop compares it against
+    // what we asked for and re-sends when the host never got the request.
+    hostRegion = { x: r.x, y: r.y, w: r.w, h: r.h };
+    if (r.active) hideSharpPill(); // the (re)cropped stream is live — sharp frames are arriving
     const region = isFullRegion(r) ? null : r;
     if (r.active) view.setFrameRegionActive(region);
     else view.setFrameRegion(region);
@@ -268,6 +359,12 @@ async function start(): Promise<void> {
     if (!document.hidden) resumeIfNeeded();
   });
   window.addEventListener("pageshow", resumeIfNeeded);
+  // Real unload (refresh/navigate-away, not a bfcache freeze): close the session gracefully so the
+  // agent drops us from its viewer count immediately instead of waiting out the ICE consent
+  // timeout. bfcache restores re-enter via pageshow → resumeIfNeeded, which rebuilds the link.
+  window.addEventListener("pagehide", (e) => {
+    if (!e.persisted) conn.close();
+  });
 
   if (!token) {
     controls.flashError("No pairing token in the URL (#t=…). Re-open the link/QR from the agent.");

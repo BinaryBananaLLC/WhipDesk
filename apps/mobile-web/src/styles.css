@@ -641,6 +641,31 @@ textarea {
   display: none !important;
 }
 
+/* Tiny centered spinner shown while a requested re-crop hasn't gone live yet (encoder catching
+   up or recovering) — tells the user the sharp view is coming instead of looking broken. Its
+   visibility is fully driven from main.ts (armed >1.2s after an unconfirmed crop request, hidden
+   the moment the host reports the crop live, on disconnect, and by a 30s failsafe). */
+.wd-sharpen {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(235, 240, 248, 0.25);
+  border-top-color: rgba(235, 240, 248, 0.9);
+  box-shadow: 0 0 0 4px rgba(6, 9, 14, 0.35);
+  pointer-events: none;
+  z-index: 15;
+  animation: wd-sharpen-spin 0.9s linear infinite;
+}
+@keyframes wd-sharpen-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* PIN unlock overlay */
 .wd-pin-overlay {
   position: absolute;
@@ -730,7 +755,8 @@ textarea {
   z-index: 18;
   display: grid;
   place-items: center;
-  background: rgba(6, 9, 14, 0.92);
+  /* Pure black to match the loading gif's own canvas (no visible box edge around it). */
+  background: rgba(0, 0, 0, 0.96);
   backdrop-filter: blur(6px);
   padding: 20px;
 }
@@ -739,25 +765,14 @@ textarea {
   max-width: 320px;
   text-align: center;
 }
-.wd-connecting-whip {
-  width: 56px;
-  height: 56px;
-  object-fit: contain;
+/* Animated whip gif (306x202, black canvas) — the loading animation itself, so no extra spinner. */
+.wd-connecting-anim {
+  width: 180px;
+  height: auto;
   display: block;
-  margin: 0 auto 18px;
-  /* Pivot from the bottom-left corner so the whip visibly swings like it's being cracked.
-     (A tiny ±4° bob made transform-origin look like it did nothing — the swing now reads.) */
-  transform-origin: left bottom;
-  animation: wd-whip-crack 1.4s ease-in-out infinite;
-}
-.wd-connecting-spinner {
-  width: 34px;
-  height: 34px;
   margin: 0 auto 16px;
-  border: 3px solid rgba(255, 255, 255, 0.22);
-  border-top-color: #4ea1ff;
-  border-radius: 50%;
-  animation: wd-spin 0.8s linear infinite;
+  background: #000;
+  border-radius: 10px;
 }
 .wd-connecting-msg {
   margin: 0;
@@ -765,26 +780,6 @@ textarea {
   font-size: 15px;
   font-weight: 600;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-@keyframes wd-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes wd-whip-crack {
-  0%,
-  100% {
-    transform: rotate(-16deg);
-  }
-  40% {
-    transform: rotate(14deg);
-  }
-  55% {
-    transform: rotate(5deg);
-  }
-  70% {
-    transform: rotate(11deg);
-  }
 }
 
 /* change-alerts dialog */

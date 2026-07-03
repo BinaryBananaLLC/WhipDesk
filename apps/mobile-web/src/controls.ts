@@ -583,15 +583,20 @@ export class Controls {
       b.onclick = () => conn.send({ type: "key", key });
       buttons.appendChild(b);
     }
-    const dbl = btn("Double-click");
+    // 1x/2x/3x click (same pointer icon family as the Viewer tab, compact labels — three buttons
+    // must share the cramped Type row). 1x is here so a quick focus-click before typing (select a
+    // field, dismiss a popup) never forces a tab switch away from Type.
+    const single = iconBtn("pointer", "1x click");
+    single.onclick = () => input.click("left");
+    const dbl = iconBtn("double-click", "2x click");
     dbl.onclick = () => input.multiClick(2);
-    const triple = btn("Triple-click");
+    const triple = iconBtn("double-click", "3x click");
     triple.onclick = () => input.multiClick(3);
     const insert = iconBtn("insert", "Insert");
     insert.onclick = () => this.sendText(false);
     const send = iconBtn("send", "Send", "wd-btn wd-go");
     send.onclick = () => this.sendText(true);
-    buttons.append(dbl, triple, insert, send);
+    buttons.append(single, dbl, triple, insert, send);
 
     pane.append(this.promptInput, buttons);
     return pane;

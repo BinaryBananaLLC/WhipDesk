@@ -208,6 +208,13 @@ export class ScreenCaptureSession {
   private spawnAt = 0;
   private lastPacketAt = 0;
   private everGotPacket = false;
+  /** Whether the CURRENT spawn has delivered any packet — distinguishes a capture that "went
+   * silent" from one that never started (the avfoundation zero-frame deadlock) in stall logs. */
+  private spawnGotPacket = false;
+  /** Consecutive stall-restarts whose spawn never produced a frame (resets on any packet). */
+  private framelessRestarts = 0;
+  /** Resolves the restart loop's bounded wait as soon as the current spawn's first packet lands. */
+  private firstPacketWaiter: (() => void) | null = null;
   private deadRestarts = 0;
   private erroredOut = false;
   private stopped = false;
@@ -239,7 +246,12 @@ export class ScreenCaptureSession {
   }
 
   async start(): Promise<void> {
-    await this.spawn();
+    // Route the initial spawn through restart() so it holds the `restarting` lock: a reconfigure
+    // that lands DURING startup (a zoomed controller re-asserts its crop the moment it's admitted)
+    // then just updates `cfg` for the loop instead of racing a SECOND concurrent spawn. Two
+    // concurrent spawns end with one ffmpeg orphaned but still streaming — interleaved RTP from
+    // two different crops on one track, i.e. the client renders the WRONG part of the screen.
+    await this.restart();
   }
 
   /** Change the zoom crop or target display. A no-op when nothing changed, so a redundant viewport
@@ -275,16 +287,32 @@ export class ScreenCaptureSession {
     // a zoom-out (crop cleared) drops back to the unchanged single-output pipeline.
     const ov = !isFull(cfg.crop) && cfg.overview ? cfg.overview : null;
 
-    let sock: Socket;
+    let sock: Socket | null = null;
     let sockOv: Socket | null = null;
     try {
       sock = await bindUdp();
-      if (ov) sockOv = await bindUdp();
+      if (ov) {
+        sockOv = await bindUdp();
+        // ffmpeg's RTP muxer also binds a LOCAL port adjacent to the one it sends to (RTCP), and
+        // the OS loves handing out consecutive ephemeral ports — adjacent receive sockets then
+        // collide with it ("bind failed: Address already in use" on stderr; harmless but noisy,
+        // and it costs that output its RTCP). Re-bind the overview socket until non-adjacent.
+        for (let tries = 0; tries < 4; tries++) {
+          const p = (sock.address() as { port: number }).port;
+          const q = (sockOv.address() as { port: number }).port;
+          if (Math.abs(p - q) > 1) break;
+          const again = await bindUdp();
+          closeQuietly(sockOv);
+          sockOv = again;
+        }
+      }
     } catch {
+      if (sock) closeQuietly(sock);
       if (sockOv) closeQuietly(sockOv);
       this.fail();
       return false;
     }
+    if (!sock) return false;
     if (this.stopped) {
       closeQuietly(sock);
       if (sockOv) closeQuietly(sockOv);
@@ -303,6 +331,11 @@ export class ScreenCaptureSession {
       "-c:v", enc, ...preset,
       "-pix_fmt", "yuv420p",
       "-g", String(gop),
+      // Also key on WALL-CLOCK time, not just frame count: with VFR a static screen yields few output
+      // frames, so a frames-based GOP can leave a lost IDR unrepaired "until something moves". Forcing
+      // a keyframe ~1s (by PTS, which advances via -use_wallclock_as_timestamps) guarantees the client
+      // can always re-sync within ~1s even with no PLI and a frozen desktop.
+      "-force_key_frames", "expr:gte(t,n_forced*1)",
       "-b:v", kbpsArg(kbps),
       "-maxrate", kbpsArg(kbps),
       "-bufsize", kbpsArg(kbps * 2),
@@ -339,15 +372,19 @@ export class ScreenCaptureSession {
     this.appliedCfg = cfg;
     this.spawnAt = Date.now();
     this.lastPacketAt = Date.now();
+    this.spawnGotPacket = false;
     // The crop THIS spawn encodes; the first packet means its frames are now LIVE on the wire.
     const spawnCrop = cfg.crop;
     let firstPacket = true;
     sock.on("message", (msg) => {
       this.lastPacketAt = Date.now();
       this.everGotPacket = true;
+      this.spawnGotPacket = true;
       this.deadRestarts = 0;
       if (firstPacket) {
         firstPacket = false;
+        this.framelessRestarts = 0;
+        this.firstPacketWaiter?.();
         this.activeListener?.(spawnCrop);
       }
       this.listener?.(msg);
@@ -374,9 +411,16 @@ export class ScreenCaptureSession {
       }
     });
     proc.on("error", (e) => log.warn("video encoder process error:", e.message));
+    // A death WE caused nulls this.proc first (kill()); anything else exiting is worth seeing.
+    proc.on("exit", (code, sig) => {
+      if (this.proc === proc && !this.stopped) log.debug(`ffmpeg exited unexpectedly (${code ?? sig ?? "?"})`);
+    });
     this.startHealthMonitor();
+    const cropDesc = isFull(cfg.crop)
+      ? "full desktop"
+      : `zoomed ${cfg.crop!.x.toFixed(2)},${cfg.crop!.y.toFixed(2)} ${cfg.crop!.w.toFixed(2)}x${cfg.crop!.h.toFixed(2)}`;
     log.debug(
-      `video: H.264 capture started (${enc}, ${kbpsArg(cfg.kbps)}@${cfg.fps}fps, ${cfg.crop ? "zoomed" : "full desktop"}${ov ? " + overview" : ""})`,
+      `video: H.264 capture started (${enc}, ${kbpsArg(cfg.kbps)}@${cfg.fps}fps, ${cropDesc}${ov ? " + overview" : ""})`,
     );
     return true;
   }
@@ -391,8 +435,19 @@ export class ScreenCaptureSession {
       if (this.stopped || this.restarting || !this.proc) return;
       const now = Date.now();
       if (this.everGotPacket) {
-        if (now - this.lastPacketAt > ScreenCaptureSession.STALL_MS) {
-          log.debug("screen capture stalled — restarting");
+        // A spawn that has NEVER produced gets a growing leash: the zero-frame state is
+        // perpetuated by tearing down frameless sessions, and a late avfoundation init can
+        // succeed where an early kill re-poisons the state. Observed worst HEALTHY
+        // spawn->first-packet is ~2s, so 4s is 2x headroom while recovering a cycle sooner
+        // than the old 5s+2.5s ladder.
+        const stallMs = this.spawnGotPacket
+          ? ScreenCaptureSession.STALL_MS
+          : Math.min(4000 + this.framelessRestarts * 1500, 10_000);
+        if (now - this.lastPacketAt > stallMs) {
+          if (!this.spawnGotPacket) this.framelessRestarts += 1;
+          log.debug(
+            `screen capture stalled — restarting (${this.spawnGotPacket ? "went silent" : `spawn never produced a frame after ${Math.round(stallMs / 1000)}s`})`,
+          );
           void this.restart();
         }
         return;
@@ -415,12 +470,68 @@ export class ScreenCaptureSession {
       // Loop so a config change that lands DURING a restart (settled a new zoom) is applied: spawn
       // snaps the config it used into `appliedCfg`; if `cfg` moved past it, go round again.
       do {
-        this.kill();
+        await this.killAndWait();
         if (!(await this.spawn())) break;
+        // Let the fresh capture reach its FIRST frame (bounded) before a newer crop may replace
+        // it: tearing down sessions that never produced is what drives WindowServer into the
+        // zero-frame state, and coalescing to the newest crop only after the previous one is
+        // live also skips useless intermediate restarts during a swipe burst.
+        await this.waitForFirstPacket(3000);
       } while (!this.stopped && this.appliedCfg !== null && !sameConfig(this.cfg, this.appliedCfg));
     } finally {
       this.restarting = false;
     }
+  }
+
+  /**
+   * Kill the current ffmpeg and WAIT until it has actually EXITED — plus a short macOS beat for
+   * WindowServer to release its screen-capture session — before the caller spawns the next one.
+   *
+   * kill() alone is fire-and-forget: signal delivery and the OS-side capture teardown are both
+   * asynchronous, so under re-crop churn (pan swipe after swipe) the next ffmpeg starts while the
+   * old capture session is still registered — the documented avfoundation deadlock where BOTH
+   * captures yield zero frames. Worse, the health monitor's recovery restart repeats the same
+   * unserialized kill→spawn every 5s, re-triggering the overlap each time: the observed
+   * "stalled — restarting" loop with no "crop live" ever following, dead for tens of seconds.
+   * Serializing exit→settle→spawn removes the overlap entirely, at ~150ms per re-crop.
+   */
+  private async killAndWait(): Promise<void> {
+    const proc = this.proc;
+    const exited =
+      proc && proc.exitCode === null && proc.signalCode === null
+        ? new Promise<void>((resolve) => {
+            // Cap past kill()'s 1.5s SIGKILL escalation — a truly unkillable process must not
+            // wedge re-crops forever.
+            const cap = setTimeout(resolve, 2500);
+            cap.unref?.();
+            proc.once("exit", () => {
+              clearTimeout(cap);
+              resolve();
+            });
+          })
+        : null;
+    this.kill();
+    if (exited) {
+      await exited;
+      if (process.platform === "darwin") await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+
+  /** Bounded wait for the current spawn's first RTP packet (resolves immediately if it already
+   * produced, on stop, or at the cap). See the restart loop for why replacing a capture that
+   * hasn't produced yet is dangerous on macOS. */
+  private waitForFirstPacket(capMs: number): Promise<void> {
+    if (this.spawnGotPacket || this.stopped) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(cap);
+        if (this.firstPacketWaiter === done) this.firstPacketWaiter = null;
+        resolve();
+      };
+      const cap = setTimeout(done, capMs);
+      cap.unref?.();
+      this.firstPacketWaiter = done;
+    });
   }
 
   private fail(): void {
@@ -437,12 +548,34 @@ export class ScreenCaptureSession {
     }
     const proc = this.proc;
     this.proc = null;
-    if (proc) {
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
+      // SIGTERM, not SIGKILL: ffmpeg's signal handler stops the AVCapture session properly before
+      // exiting. SIGKILL gives it no chance to, leaving the dead process's screen-capture session
+      // registered in WindowServer — those orphans ACCUMULATE under re-crop churn (pan swipe after
+      // swipe) until macOS serves NEW captures zero frames for tens of seconds. Proven by logs:
+      // even fully serialized 5s-apart respawns stayed frameless for 47s while the SIGKILL-based
+      // stall loop kept re-poisoning the state. Escalate to SIGKILL only if ffmpeg hangs.
       try {
-        proc.kill("SIGKILL");
+        proc.kill("SIGTERM");
       } catch {
         /* ignore */
       }
+      // A TERM-responsive ffmpeg exits well under 300ms. One that NEVER produced a frame is
+      // usually wedged inside avfoundation init and won't process the signal at all — it needs
+      // the KILL anyway, and every extra ms of waiting just extends the recovery outage, so give
+      // frameless spawns a much shorter escalation deadline.
+      const hardKill = setTimeout(
+        () => {
+          try {
+            proc.kill("SIGKILL");
+          } catch {
+            /* ignore */
+          }
+        },
+        this.spawnGotPacket ? 1500 : 700,
+      );
+      hardKill.unref?.();
+      proc.once("exit", () => clearTimeout(hardKill));
     }
     if (this.sock) {
       closeQuietly(this.sock);
@@ -604,7 +737,20 @@ export class VideoHub {
       // The controller may have disconnected (or everyone backgrounded) during startup — don't
       // leave ffmpeg orphaned.
       if (this.paused || (this.sinks.size === 0 && this.overviewSinks.size === 0)) session.stop();
-      else this.session = session;
+      else {
+        this.session = session;
+        // A setViewport/setQuality/setDisplay that landed WHILE the session was starting hit a
+        // null `this.session` (its reconfigure went nowhere) and would be silently lost — leaving
+        // the encoder on a stale crop that the controller believes is already applied (the
+        // "wrong viewport that never fixes itself" bug). Re-assert the latest state; reconfigure
+        // no-ops when nothing actually moved, so this is free in the common case.
+        void session.reconfigure({
+          displayIndex: this.opts.displayIndex(),
+          crop: this.crop,
+          kbps: this.kbps,
+          fps: this.fps,
+        });
+      }
     })().finally(() => (this.starting = null));
     return this.starting;
   }
