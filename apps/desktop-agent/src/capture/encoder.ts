@@ -151,17 +151,22 @@ async function captureDeviceFor(displayIndex: number, fps: number): Promise<stri
   return null;
 }
 
-/** Build the scale (+optional crop) filter. Comma inside min() is escaped for the filtergraph. */
+/** Build the scale (+optional crop) filter. Comma inside min() is escaped for the filtergraph.
+ * The width is truncated to an even value (`trunc(w/2)*2`) — libx264 needs BOTH dimensions divisible
+ * by 2, and a narrow crop (cropped width < maxWidth) would otherwise pass an ODD native width
+ * straight through the scale and make the encoder abort ("width not divisible by 2"). `-2` on the
+ * height already keeps it even; this makes the width match. */
 function videoFilter(crop: Region | null, maxWidth: number): string {
-  const scale = `scale=min(${Math.round(maxWidth)}\\,iw):-2`;
+  const scale = `scale=trunc(min(${Math.round(maxWidth)}\\,iw)/2)*2:-2`;
   if (isFull(crop)) return scale;
   const c = crop!;
   return `crop=iw*${c.w.toFixed(4)}:ih*${c.h.toFixed(4)}:iw*${c.x.toFixed(4)}:ih*${c.y.toFixed(4)},${scale}`;
 }
 
-/** Overview branch of the split graph: the FULL frame scaled small and decimated to a few fps. */
+/** Overview branch of the split graph: the FULL frame scaled small and decimated to a few fps.
+ * Width truncated to even for the same libx264 reason as videoFilter(). */
 function overviewFilter(ov: OverviewConfig): string {
-  return `scale=min(${Math.round(ov.width)}\\,iw):-2,fps=${Math.max(1, Math.round(ov.fps))}`;
+  return `scale=trunc(min(${Math.round(ov.width)}\\,iw)/2)*2:-2,fps=${Math.max(1, Math.round(ov.fps))}`;
 }
 
 function sameCrop(a: Region | null, b: Region | null): boolean {
