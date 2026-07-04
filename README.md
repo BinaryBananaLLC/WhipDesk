@@ -128,6 +128,27 @@ Wayland. Input injection also needs access to `/dev/uinput` on some setups.
 If capture is genuinely blocked, the agent also logs step-by-step help and pushes a
 "Screen capture blocked" alert to your phone.
 
+### Verbose logs (for bug reports)
+
+When something misbehaves — a black or frozen screen, a capture that keeps restarting, a
+connection that won't form — re-run the agent with `--verbose` and share the output when you open
+an issue. It surfaces the capture/encoder/ffmpeg and transport chatter that's hidden in normal use.
+
+- **Prebuilt binary** (Scoop / direct download): `whipdesk --verbose`
+- **From source**: `npm run whipdesk:verbose` (or `npm run dev` to rebuild the controller first)
+
+Copy the console output from startup through the moment the problem happens into your
+[GitHub issue](https://github.com/BinaryBananaLLC/WhipDesk/issues). The only secret shown is the
+pairing token in the connect URL — redact the `#t=…` fragment before sharing.
+
+### Windows screen capture & HDR
+
+On Windows the agent captures with the GPU **Desktop Duplication API** (ddagrab), which stays fast
+at 4K and captures **HDR** desktops correctly. On old Windows builds or GPUs without Direct3D 11 it
+falls back automatically to the legacy `gdigrab` grabber — that path can't read an HDR framebuffer,
+so if the screen there is black or full of artifacts, update your graphics driver or turn HDR off in
+**Settings → System → Display**.
+
 ## How it works
 
 A **desktop agent** (Node) captures the screen, injects input, and serves the **web controller**

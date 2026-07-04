@@ -125,6 +125,14 @@ async function avScreenIndex(displayId: number): Promise<string | null> {
   return map.get(displayId) ?? map.get(0) ?? null;
 }
 
+/** How to feed one platform's screen into ffmpeg: the input-side args plus any filter chain needed
+ * to land frames in system memory (Windows ddagrab yields GPU/D3D11 frames). */
+interface CaptureSource {
+  inputArgs: string[];
+  /** Comma-terminated filter run BEFORE any crop/scale. "" when frames are already in RAM. */
+  hwPrefix: string;
+}
+
 /**
  * ffmpeg input args to grab the screen DIRECTLY on this platform, or null if unsupported.
  *
@@ -134,19 +142,43 @@ async function avScreenIndex(displayId: number): Promise<string | null> {
  * ZERO frames. We pin `nv12` (4:2:0, what VideoToolbox encodes natively). The harmless
  * `NSKVONotifying_AVCaptureScreenInput not linked` line on stderr is a known ffmpeg-static cosmetic
  * warning, not a failure.
+ *
+ * Windows: ddagrab (Desktop Duplication API, GPU). Unlike gdigrab's GDI BitBlt it reads the DWM
+ * composited surface, so it stays fast at 4K AND captures HDR desktops — gdigrab returns black /
+ * artifacts on HDR. ddagrab yields D3D11 frames, so `hwPrefix` downloads them to RAM before the
+ * crop/scale filters. `output_idx` selects the monitor (gdigrab could only grab the whole virtual
+ * desktop). `dup_frames` stays on (default) so frames flow steadily and the stall monitor never
+ * false-trips on a static screen. A ddagrab that never produces a frame (no D3D11 / older Windows)
+ * falls back to gdigrab via `winFallback`.
+ *
+ * Linux: x11grab.
  */
-async function captureDeviceFor(displayIndex: number, fps: number): Promise<string[] | null> {
+async function captureDeviceFor(displayIndex: number, fps: number, winFallback: boolean): Promise<CaptureSource | null> {
   const r = String(Math.max(1, Math.min(60, Math.round(fps))));
+  // Wall-clock PTS override for the raw-grab demuxers whose own timestamps are unreliable.
+  const ts = ["-fflags", "+genpts", "-use_wallclock_as_timestamps", "1"];
   if (process.platform === "darwin") {
     const idx = await avScreenIndex(displayIndex);
     if (idx == null) return null;
-    return ["-f", "avfoundation", "-capture_cursor", "1", "-pixel_format", "nv12", "-framerate", r, "-i", `${idx}:none`];
+    return {
+      inputArgs: [...ts, "-f", "avfoundation", "-capture_cursor", "1", "-pixel_format", "nv12", "-framerate", r, "-i", `${idx}:none`],
+      hwPrefix: "",
+    };
   }
   if (process.platform === "win32") {
-    return ["-f", "gdigrab", "-framerate", r, "-i", "desktop"];
+    if (winFallback) {
+      return { inputArgs: [...ts, "-f", "gdigrab", "-framerate", r, "-i", "desktop"], hwPrefix: "" };
+    }
+    // ddagrab drives its own PTS at `framerate`, so no wallclock override; hwdownload brings the
+    // D3D11 frame to system memory for the software (libx264) filters + encoder.
+    const idx = Math.max(0, Math.round(displayIndex));
+    return {
+      inputArgs: ["-f", "lavfi", "-i", `ddagrab=output_idx=${idx}:framerate=${r}:draw_mouse=1`],
+      hwPrefix: "hwdownload,format=bgra,",
+    };
   }
   if (process.platform === "linux") {
-    return ["-f", "x11grab", "-framerate", r, "-i", process.env.DISPLAY || ":0.0"];
+    return { inputArgs: [...ts, "-f", "x11grab", "-framerate", r, "-i", process.env.DISPLAY || ":0.0"], hwPrefix: "" };
   }
   return null;
 }
@@ -226,6 +258,8 @@ export class ScreenCaptureSession {
   private restarting = false;
   /** Config the running ffmpeg was built from; lets a restart detect that `cfg` moved during it. */
   private appliedCfg: CaptureConfig | null = null;
+  /** Windows only: set once ddagrab fails to produce a frame, switching capture to gdigrab. */
+  private winCaptureFallback = false;
 
   /** Don't declare a not-yet-producing capture dead until it's had this long to start up. */
   private static readonly FIRST_FRAME_GRACE_MS = 6000;
@@ -280,7 +314,7 @@ export class ScreenCaptureSession {
     if (this.stopped) return false;
     const cfg = this.cfg;
     const enc = await pickH264Encoder();
-    const capture = await captureDeviceFor(cfg.displayIndex, cfg.fps);
+    const capture = await captureDeviceFor(cfg.displayIndex, cfg.fps, this.winCaptureFallback);
     if (!enc || !ffmpegPath || !capture) {
       if (!capture) log.warn("no direct screen-capture device on this platform — screen sharing unavailable");
       this.fail();
@@ -326,9 +360,9 @@ export class ScreenCaptureSession {
     const port = (sock.address() as { port: number }).port;
     const portOv = sockOv ? (sockOv.address() as { port: number }).port : 0;
     const preset = enc === "libx264" ? ["-preset", "ultrafast", "-tune", "zerolatency"] : ["-realtime", "1"];
-    // Shared input: stamp frames with monotonic wall-clock PTS (avfoundation's own timestamps are
-    // unreliable); paired with each output's `-fps_mode vfr` this gives the RTP muxer sane timing.
-    const input = ["-hide_banner", "-loglevel", "error", "-fflags", "+genpts", "-use_wallclock_as_timestamps", "1", ...capture, "-an"];
+    // Input flags are platform-specific (see captureDeviceFor); paired with each output's
+    // `-fps_mode vfr` they give the RTP muxer sane timing.
+    const input = ["-hide_banner", "-loglevel", "error", ...capture.inputArgs, "-an"];
     // One H.264 RTP output: vfr (avfoundation reports a bogus tbr=1000k; without VFR ffmpeg duplicates
     // frames toward a million fps and the RTP muxer drowns), short GOP self-heals after loss.
     const h264Out = (kbps: number, gop: number, ssrc: string, outPort: number): string[] => [
@@ -353,12 +387,13 @@ export class ScreenCaptureSession {
       ? [
           ...input,
           // The full captured frame fans into two encodes: [m] the sharp crop, [o] the small overview.
+          // hwPrefix (ddagrab) downloads once, before the split, so both branches get RAM frames.
           "-filter_complex",
-          `[0:v]split=2[m][o];[m]${videoFilter(cfg.crop, cfg.maxWidth)}[mainout];[o]${overviewFilter(ov)}[ovout]`,
+          `[0:v]${capture.hwPrefix}split=2[m][o];[m]${videoFilter(cfg.crop, cfg.maxWidth)}[mainout];[o]${overviewFilter(ov)}[ovout]`,
           "-map", "[mainout]", ...h264Out(cfg.kbps, mainGop, "1", port),
           "-map", "[ovout]", ...h264Out(ov.kbps, Math.max(1, Math.round(ov.fps)), "2", portOv),
         ]
-      : [...input, "-vf", videoFilter(cfg.crop, cfg.maxWidth), ...h264Out(cfg.kbps, mainGop, "1", port)];
+      : [...input, "-vf", `${capture.hwPrefix}${videoFilter(cfg.crop, cfg.maxWidth)}`, ...h264Out(cfg.kbps, mainGop, "1", port)];
 
     let proc: ChildProcessByStdio<null, null, Readable>;
     try {
@@ -458,6 +493,13 @@ export class ScreenCaptureSession {
         return;
       }
       if (now - this.spawnAt < ScreenCaptureSession.FIRST_FRAME_GRACE_MS) return;
+      if (process.platform === "win32" && !this.winCaptureFallback) {
+        // ddagrab never produced a frame (no D3D11 / unsupported GPU) — retry once with gdigrab.
+        this.winCaptureFallback = true;
+        log.debug("screen capture: ddagrab produced no frame — falling back to gdigrab");
+        void this.restart();
+        return;
+      }
       if (++this.deadRestarts > ScreenCaptureSession.MAX_DEAD_RESTARTS) {
         this.kill();
         this.fail();

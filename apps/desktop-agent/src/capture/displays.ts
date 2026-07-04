@@ -56,13 +56,26 @@ async function readNsScreens(): Promise<NsScreen[] | null> {
   }
 }
 
+/** screenshot-desktop returns raw OS device names on Windows (e.g. "\\.\DISPLAY2") which look
+ * cryptic in the picker. Normalize those to a friendly "Display N"; leave meaningful names (macOS
+ * gives "Built-in Retina Display", monitor model names, etc.) untouched. */
+function friendlyDisplayName(raw: unknown, index: number): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return `Display ${index + 1}`;
+  const m = /DISPLAY(\d+)/i.exec(s);
+  if (m) return `Display ${m[1]}`;
+  // Any other GDI-style device path (\\.\...) is not user-friendly either.
+  if (/^\\\\/.test(s)) return `Display ${index + 1}`;
+  return s;
+}
+
 /** screenshot-desktop's display list: 0-based ids, primary first, names but no geometry. */
 async function listBaseDisplays(): Promise<Array<{ id: number; name: string; primary: boolean }>> {
   try {
     const displays = await screenshot.listDisplays();
     return displays.map((d, index) => ({
       id: typeof d.id === "number" ? d.id : index,
-      name: String(d.name ?? `Display ${index + 1}`),
+      name: friendlyDisplayName(d.name, index),
       primary: Boolean((d as { primary?: boolean }).primary) || index === 0,
     }));
   } catch (error) {

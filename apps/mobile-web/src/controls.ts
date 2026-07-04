@@ -635,8 +635,10 @@ export class Controls {
       this.monitorList.appendChild(el("span", "wd-hint", "Single display"));
       return;
     }
-    this.displays.forEach((d, i) => {
-      const label = `${i + 1}. ${d.name}${d.primary ? " ★" : ""}`;
+    this.displays.forEach((d) => {
+      // The host already provides friendly names ("Display 1", monitor models, …), so show them
+      // as-is with a star for the primary — no redundant leading index.
+      const label = `${d.name}${d.primary ? " ★" : ""}`;
       const b = btn(label);
       b.classList.toggle("on", d.id === this.activeDisplay);
       b.onclick = () => {

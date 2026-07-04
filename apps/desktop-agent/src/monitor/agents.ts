@@ -158,8 +158,8 @@ function vsCodeChatSessionDirs(): string[] {
     .map((e) => e.path);
 }
 
-/** Is a GitHub Copilot extension installed in any VS Code variant? Cached — checked at most
- * once a minute, because `match` runs for every process on every 3s poll. */
+/** Is a GitHub Copilot extension available in any VS Code variant? Cached — checked at most once a
+ * minute, because `match` runs for every process on every 3s poll. */
 let copilotInstalledCache: { value: boolean; at: number } | null = null;
 function vsCodeCopilotInstalled(): boolean {
   const now = Date.now();
@@ -175,14 +175,24 @@ function vsCodeCopilotInstalled(): boolean {
       /* variant not installed */
     }
   }
+  // Copilot Chat ships BUILT-IN in recent VS Code (not under .vscode/extensions), so also treat the
+  // presence of chat-session storage as "Copilot available" — that storage is only written by chat.
+  if (!value) value = vsCodeChatSessionDirs().length > 0;
   copilotInstalledCache = { value, at: now };
   return value;
 }
 
-/** The VS Code extension-host process (hosts Copilot Chat). Marker differs across VS Code
- * versions: legacy `--type=extensionHost`, current utility-process `extensionHostProcess`. */
+/** The VS Code extension-host process (hosts Copilot Chat). The marker moved across versions:
+ * legacy `--type=extensionHost`; some builds `extensionHostProcess`; modern VS Code (1.80+) runs it
+ * as a Node UTILITY process with NO "extensionHost" string at all — it's the `node.mojom.NodeService`
+ * that carries an `--inspect-port` (extension debugging), which the sibling shared-process / file-
+ * watcher / pty-host node services do not. */
 function isVsCodeExtensionHost(cmd: string): boolean {
-  return cmd.includes("--type=extensionhost") || cmd.includes("extensionhostprocess");
+  return (
+    cmd.includes("--type=extensionhost") ||
+    cmd.includes("extensionhostprocess") ||
+    (cmd.includes("node.mojom.nodeservice") && cmd.includes("--inspect-port"))
+  );
 }
 
 export const AGENTS: AgentDef[] = [
