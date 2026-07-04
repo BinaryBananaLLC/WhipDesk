@@ -181,7 +181,7 @@ function buildWelcome(ctx: AgentContext): WelcomeMessage {
   return {
     type: "welcome",
     protocol: PROTOCOL_VERSION,
-    agent: { version: AGENT_VERSION, platform: platform(), hostname: hostname() },
+    agent: { version: AGENT_VERSION, platform: platform(), hostname: hostname(), hdr: ctx.hdrActive || undefined },
     screen: ctx.screen,
     capture: { fps: ctx.config.fps, quality: ctx.config.quality, maxWidth: ctx.config.maxWidth },
     capabilities: {

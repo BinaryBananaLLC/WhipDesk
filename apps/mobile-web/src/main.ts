@@ -9,6 +9,7 @@ import { registerPush } from "./push";
 import { RemoteConnection, type FirebaseWebConfig } from "./remote";
 import { ScreenView } from "./screen";
 import { RegionWatchers } from "./watchers";
+import { Whipository } from "./whipository";
 import "./styles.css";
 
 interface HashParams {
@@ -57,7 +58,9 @@ const { token, remote, device } = parseHash();
 const view = new ScreenView(canvas);
 const notifications = new Notifications(toasts);
 const pinPrompt = new PinPrompt(app);
-const connecting = new ConnectingOverlay(app);
+// The dashboard escape hatch only makes sense when the user CAME from the dashboard (cloud
+// remote session); a LAN controller has no machine list to go back to.
+const connecting = new ConnectingOverlay(app, { dashboardEscape: remote && !!device });
 
 async function makeTransport(remoteConfig: FirebaseWebConfig | null): Promise<ControllerTransport> {
   if (remote && device) {
@@ -85,8 +88,11 @@ async function start(): Promise<void> {
   // background delivery when the PWA is closed.
   const requestNotifications = () =>
     remoteConfig ? registerPush(remoteConfig, notifications) : notifications.requestPermission();
-  const watchers = new RegionWatchers(app!, conn, view, notifications, requestNotifications);
-  const controls = new Controls(app!, { conn, view, input, notifications, watchers });
+  // Whipository: reusable saved prompts. Cloud sessions sync to the user's account (one lazy
+  // Firestore read/session + debounced writes); LAN keeps them in this browser only.
+  const whipository = new Whipository(app!, notifications, remoteConfig);
+  const watchers = new RegionWatchers(app!, conn, view, notifications, requestNotifications, whipository);
+  const controls = new Controls(app!, { conn, view, input, notifications, watchers, whipository });
 
   // Hidden <video> sink for the single WebRTC desktop track. The ScreenView draws from it, so
   // zoom/pan/cursor all keep working; it stays display:none and feeds the canvas.

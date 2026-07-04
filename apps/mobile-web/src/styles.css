@@ -788,6 +788,18 @@ textarea {
   font-weight: 600;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
+/* Escape hatch back to the dashboard — hidden for the first seconds of a connect (fast, healthy
+ * handshakes never show it), then fades in as a quiet text link, never a competing button. */
+.wd-connecting-back {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+  margin-top: 22px;
+}
+.wd-connecting-back.shown {
+  opacity: 1;
+  pointer-events: auto;
+}
 
 /* change-alerts dialog */
 .wd-dialog-overlay {
@@ -1224,6 +1236,17 @@ textarea {
   font-weight: 600;
   word-break: break-word;
 }
+/* HDR heads-up under the Machine row — informational amber, not an error */
+.wd-conn-hdr {
+  margin: 6px 0 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(255, 178, 44, 0.1);
+  border: 1px solid rgba(255, 178, 44, 0.45);
+  color: #ffb22c;
+  font-size: 12px;
+  font-weight: 600;
+}
 .wd-disconnect {
   width: 100%;
   justify-content: center;
@@ -1377,6 +1400,79 @@ textarea {
 }
 .wd-place-text {
   width: 100%;
+}
+/* prompt textarea + the tiny Whipository button beside it (scheduled-work text entry) */
+.wd-place-text-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.wd-place-text-row .wd-place-text {
+  flex: 1;
+  min-width: 0;
+}
+.wd-place-whips {
+  align-self: flex-start;
+}
+
+/* Whipository — saved reusable prompts ("whips") */
+/* Must beat the placement layer/bar (z 40–42): one of its openers sits ON the placement bar. */
+.wd-whips-overlay {
+  z-index: 45;
+}
+.wd-whips-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.wd-whip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.wd-whip-text {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: left;
+  padding: 4px 0;
+  cursor: pointer;
+  /* Long prompts stay a 2-line teaser — the row is a picker, not a reader. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wd-whip-text:active {
+  color: var(--accent);
+}
+.wd-whips-editor-host {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.wd-whips-count {
+  align-self: flex-end;
+  color: var(--muted);
+  font-size: 12px;
+}
+.wd-whips-where {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
 }
 .wd-place-buttons {
   display: flex;

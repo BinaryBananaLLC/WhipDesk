@@ -3,6 +3,7 @@ import { createSocket, type Socket } from "node:dgram";
 import { promisify } from "node:util";
 import type { Readable } from "node:stream";
 import ffmpegPath from "ffmpeg-static";
+import { invalidateHdrCache, windowsHdrState } from "./hdr-win";
 import { log } from "../logger";
 
 const exec = promisify(execFile);
@@ -131,7 +132,24 @@ interface CaptureSource {
   inputArgs: string[];
   /** Comma-terminated filter run BEFORE any crop/scale. "" when frames are already in RAM. */
   hwPrefix: string;
+  /** Comma-LED filter appended AFTER each branch's crop/scale (e.g. HDR→SDR tone map — placed
+   * post-scale so the pricey float math runs at output size, not native 4K). "" when unneeded. */
+  postFilter: string;
+  /** True when this source captures an HDR desktop and tone-maps it (for the start log line). */
+  winHdr?: boolean;
 }
+
+/**
+ * HDR desktop → SDR H.264. With HDR ON, Windows composites the desktop in scRGB (linear FP16,
+ * 1.0 = SDR reference white); duplicating it as 8-bit BGRA is a raw truncation — the grey
+ * "washed out" remote image. So the HDR path duplicates the real FP16 frames and tone-maps:
+ * hable handles the unbounded scRGB highlights, then zscale re-encodes gamma + converts to
+ * BT.709 YUV (tin=linear tells it the input is already linear light). The bundled ffmpeg ships
+ * zscale/tonemap (libzimg) — verified against ffmpeg-static.
+ */
+const HDR_TONEMAP =
+  ",tonemap=tonemap=hable:desat=0:peak=10" +
+  ",zscale=tin=linear:pin=bt709:t=bt709:p=bt709:m=bt709:r=tv,format=yuv420p";
 
 /**
  * ffmpeg input args to grab the screen DIRECTLY on this platform, or null if unsupported.
@@ -149,7 +167,11 @@ interface CaptureSource {
  * crop/scale filters. `output_idx` selects the monitor (gdigrab could only grab the whole virtual
  * desktop). `dup_frames` stays on (default) so frames flow steadily and the stall monitor never
  * false-trips on a static screen. A ddagrab that never produces a frame (no D3D11 / older Windows)
- * falls back to gdigrab via `winFallback`.
+ * falls back to gdigrab via `winFallback`. When the desktop is HDR (hdr-win.ts probe), an 8-bit
+ * duplication would be a washed-out truncation — the HDR chain grabs scRGB FP16 and tone-maps to
+ * SDR instead (see HDR_TONEMAP). HDR toggles mid-session kill ddagrab ("Output parameters
+ * changed" / AcquireNextFrame 0x887A0026 = DXGI_ERROR_ACCESS_LOST); the stderr watcher drops the
+ * HDR cache and the unexpected-exit handler respawns within ~0.5s on the re-probed chain.
  *
  * Linux: x11grab.
  */
@@ -163,22 +185,41 @@ async function captureDeviceFor(displayIndex: number, fps: number, winFallback: 
     return {
       inputArgs: [...ts, "-f", "avfoundation", "-capture_cursor", "1", "-pixel_format", "nv12", "-framerate", r, "-i", `${idx}:none`],
       hwPrefix: "",
+      postFilter: "",
     };
   }
   if (process.platform === "win32") {
     if (winFallback) {
-      return { inputArgs: [...ts, "-f", "gdigrab", "-framerate", r, "-i", "desktop"], hwPrefix: "" };
+      return { inputArgs: [...ts, "-f", "gdigrab", "-framerate", r, "-i", "desktop"], hwPrefix: "", postFilter: "" };
     }
     // ddagrab drives its own PTS at `framerate`, so no wallclock override; hwdownload brings the
     // D3D11 frame to system memory for the software (libx264) filters + encoder.
     const idx = Math.max(0, Math.round(displayIndex));
+    // HDR desktop: duplicate the real scRGB FP16 frames and tone-map to SDR (see HDR_TONEMAP).
+    // The probe is cached (~0.5s cold, free warm), so re-crop restarts don't pay for it. If the
+    // state flipped since the cache (HDR toggled), ddagrab dies with "Output parameters changed" /
+    // "Requested output format unavailable" — the stderr watcher invalidates the cache and the
+    // quick-restart respawns with the right chain.
+    const hdr = (await windowsHdrState())?.active === true;
+    if (hdr) {
+      return {
+        inputArgs: ["-f", "lavfi", "-i", `ddagrab=output_idx=${idx}:framerate=${r}:draw_mouse=1:output_fmt=rgbaf16`],
+        // gbrpf32le BEFORE the split/crop/scale: swscale handles planar-float scaling everywhere,
+        // while direct rgbaf16 scaling is spottier across builds. Tone-mapping itself stays
+        // per-branch AFTER the scale (postFilter) so the heavy math runs at ≤maxWidth, not 4K.
+        hwPrefix: "hwdownload,format=rgbaf16,format=gbrpf32le,",
+        postFilter: HDR_TONEMAP,
+        winHdr: true,
+      };
+    }
     return {
       inputArgs: ["-f", "lavfi", "-i", `ddagrab=output_idx=${idx}:framerate=${r}:draw_mouse=1`],
       hwPrefix: "hwdownload,format=bgra,",
+      postFilter: "",
     };
   }
   if (process.platform === "linux") {
-    return { inputArgs: [...ts, "-f", "x11grab", "-framerate", r, "-i", process.env.DISPLAY || ":0.0"], hwPrefix: "" };
+    return { inputArgs: [...ts, "-f", "x11grab", "-framerate", r, "-i", process.env.DISPLAY || ":0.0"], hwPrefix: "", postFilter: "" };
   }
   return null;
 }
@@ -380,7 +421,9 @@ export class ScreenCaptureSession {
       "-bufsize", kbpsArg(kbps * 2),
       "-payload_type", String(VIDEO_PAYLOAD_TYPE),
       "-ssrc", ssrc,
-      "-f", "rtp", `rtp://127.0.0.1:${outPort}?pkt_size=1200`,
+      // buffer_size = SO_SNDBUF: keyframe bursts must not overflow the send side either (the
+      // receive side is widened in bindUdp — see the black-bottom-of-keyframe note there).
+      "-f", "rtp", `rtp://127.0.0.1:${outPort}?pkt_size=1200&buffer_size=1048576`,
     ];
     const mainGop = Math.max(10, Math.round(cfg.fps));
     const args = ov
@@ -388,12 +431,13 @@ export class ScreenCaptureSession {
           ...input,
           // The full captured frame fans into two encodes: [m] the sharp crop, [o] the small overview.
           // hwPrefix (ddagrab) downloads once, before the split, so both branches get RAM frames.
+          // postFilter (HDR tone map) runs per-branch AFTER the scale — cheap at output size.
           "-filter_complex",
-          `[0:v]${capture.hwPrefix}split=2[m][o];[m]${videoFilter(cfg.crop, cfg.maxWidth)}[mainout];[o]${overviewFilter(ov)}[ovout]`,
+          `[0:v]${capture.hwPrefix}split=2[m][o];[m]${videoFilter(cfg.crop, cfg.maxWidth)}${capture.postFilter}[mainout];[o]${overviewFilter(ov)}${capture.postFilter}[ovout]`,
           "-map", "[mainout]", ...h264Out(cfg.kbps, mainGop, "1", port),
           "-map", "[ovout]", ...h264Out(ov.kbps, Math.max(1, Math.round(ov.fps)), "2", portOv),
         ]
-      : [...input, "-vf", `${capture.hwPrefix}${videoFilter(cfg.crop, cfg.maxWidth)}`, ...h264Out(cfg.kbps, mainGop, "1", port)];
+      : [...input, "-vf", `${capture.hwPrefix}${videoFilter(cfg.crop, cfg.maxWidth)}${capture.postFilter}`, ...h264Out(cfg.kbps, mainGop, "1", port)];
 
     let proc: ChildProcessByStdio<null, null, Readable>;
     try {
@@ -447,20 +491,38 @@ export class ScreenCaptureSession {
       for (const line of d.toString().split("\n")) {
         const t = line.trim();
         if (!t || /^objc\[|NSKVONotifying|not linked into application/.test(t)) continue;
+        // A display-format change (HDR toggled, mode switch) kills ddagrab with one of these.
+        // Drop the cached HDR state NOW so the imminent respawn probes the real state and picks
+        // the right capture chain instead of dying again on the stale one.
+        if (
+          process.platform === "win32" &&
+          /AcquireNextFrame failed|Output parameters changed|Requested output format unavailable/i.test(t)
+        ) {
+          invalidateHdrCache();
+        }
         log.debug("ffmpeg:", t.slice(0, 200));
       }
     });
     proc.on("error", (e) => log.warn("video encoder process error:", e.message));
-    // A death WE caused nulls this.proc first (kill()); anything else exiting is worth seeing.
+    // A death WE caused nulls this.proc first (kill()); anything else exiting is unexpected —
+    // restart PROMPTLY instead of waiting out the 5s stall monitor. This is the recovery path for
+    // display-mode flips (HDR toggle kills ddagrab with "Output parameters changed") and plain
+    // encoder crashes. A spawn that died young waits longer so a hard-broken pipeline can't spin.
     proc.on("exit", (code, sig) => {
-      if (this.proc === proc && !this.stopped) log.debug(`ffmpeg exited unexpectedly (${code ?? sig ?? "?"})`);
+      if (this.proc !== proc || this.stopped) return;
+      log.debug(`ffmpeg exited unexpectedly (${code ?? sig ?? "?"})`);
+      const delay = Date.now() - this.spawnAt < 2000 ? 2000 : 400;
+      const t = setTimeout(() => {
+        if (this.proc === proc && !this.stopped) void this.restart();
+      }, delay);
+      t.unref?.();
     });
     this.startHealthMonitor();
     const cropDesc = isFull(cfg.crop)
       ? "full desktop"
       : `zoomed ${cfg.crop!.x.toFixed(2)},${cfg.crop!.y.toFixed(2)} ${cfg.crop!.w.toFixed(2)}x${cfg.crop!.h.toFixed(2)}`;
     log.debug(
-      `video: H.264 capture started (${enc}, ${kbpsArg(cfg.kbps)}@${cfg.fps}fps, ${cropDesc}${ov ? " + overview" : ""})`,
+      `video: H.264 capture started (${enc}, ${kbpsArg(cfg.kbps)}@${cfg.fps}fps, ${cropDesc}${ov ? " + overview" : ""}${capture.winHdr ? ", HDR desktop tone-mapped to SDR" : ""})`,
     );
     return true;
   }
@@ -641,6 +703,17 @@ function bindUdp(): Promise<Socket> {
     sock.once("error", reject);
     sock.bind(0, "127.0.0.1", () => {
       sock.removeListener("error", reject);
+      // ffmpeg blasts each encoded frame onto loopback as a burst of ~1200B packets. A 4K
+      // keyframe is hundreds of packets — far past the OS default receive buffer (Windows: a few
+      // KB) — so the burst's TAIL gets dropped before Node drains the socket, and the client
+      // renders the bottom of every keyframe as black/garbage blocks while the top looks fine
+      // (small overview frames never overflow, which is why the minimap stayed clean). A few MB
+      // of buffer absorbs the worst IDR burst.
+      try {
+        sock.setRecvBufferSize(4 * 1024 * 1024);
+      } catch {
+        /* not fatal — small frames still flow */
+      }
       resolve(sock);
     });
   });

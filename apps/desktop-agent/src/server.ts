@@ -14,12 +14,14 @@ import { RegionWatcher } from "./watchers/region";
 import { Presence } from "./presence";
 import { KeepAwake } from "./power/keep-awake";
 import { DisplayWake } from "./power/wake-display";
+import { isSessionLocked } from "./power/session-lock";
 import { ensurePin } from "./security/setup";
 import { PinThrottle } from "./security/throttle";
 import type { PinGuard } from "./security/pin";
 import { attachWebSocket } from "./transport/websocket";
 import { startFileWatcher } from "./watchers/file-pattern";
 import { videoEncodingAvailable, VideoHub } from "./capture/encoder";
+import { windowsHdrState } from "./capture/hdr-win";
 import { SessionMonitor } from "./monitor/monitor";
 import { loadAlwaysAgents, saveAlwaysAgents } from "./monitor/always-store";
 import { loadTimers, saveTimers, type StoredTimer } from "./timer-store";
@@ -56,6 +58,9 @@ export interface AgentContext {
   activeDisplay: number;
   /** Whether a real WebRTC video track can be offered (ffmpeg present + opt-in). */
   videoAvailable: boolean;
+  /** Host desktop is in HDR mode (Windows "advanced color") — surfaced in the welcome so the
+   * controller can warn that the tone-mapped stream may look washed. Refreshed lazily. */
+  hdrActive: boolean;
   /** Shared H.264 encoder + fan-out for WebRTC video tracks (null when video is off). */
   video: VideoHub | null;
   controllers: Set<Controller>;
@@ -245,6 +250,20 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     if (a) {
       try {
         log.info(`timer "${t.label || id}" firing${a.kind ? ` (${a.kind})` : ""}`);
+        // A scheduled action usually fires with nobody connected, so the display has slept and the
+        // session may have locked since it was scheduled. Synthetic input does NOT wake a slept
+        // panel, and events injected into a locked session land on the lock screen instead of the
+        // target app — the exact "timer fired but the work wasn't done" failure. Wake the panel
+        // first, give it a moment to come up, then refuse (loudly) if the session is locked.
+        displayWake.wake(30);
+        await delay(3000);
+        const locked = await isSessionLocked();
+        if (locked === true) {
+          throw new Error(
+            "the screen is locked, so the input would go to the lock screen instead of your app. " +
+              "For unattended scheduled work, set the machine to not require a password immediately after display sleep.",
+          );
+        }
         // Clicking the target IS the action for "click", and focuses it before a key/text action.
         // Give the focused app a short beat to actually take focus before we type/press — otherwise
         // the first keystrokes (e.g. an Enter that submits a prompt) can land before the field is
@@ -401,6 +420,7 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     displays,
     videoAvailable,
     video,
+    hdrActive: false,
     get activeDisplay() {
       return activeDisplay;
     },
@@ -408,6 +428,9 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     addController(controller) {
       controllers.add(controller);
       log.info(`controller connected (${controllers.size} active)`);
+      // Refresh the HDR flag for FUTURE welcomes (this one ships the last known state — the
+      // probe is async and HDR flips are rare enough that eventual consistency is fine).
+      void windowsHdrState().then((s) => (ctx.hdrActive = s?.active === true));
       // The controller just passed token + PIN: wake the display so they can reach the lock screen
       // (and keep it on while they're connected). Synthetic input alone won't wake a slept panel.
       displayWake.setActive(true);
@@ -656,6 +679,16 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   }
   log.info(`listening on :${config.port} (capture: ${capturer.backend}, input: ${input.name})`);
   log.info(pin.isSet ? "connection PIN: required" : "connection PIN: NONE (set one in a terminal)");
+  // HDR heads-up (Windows): the capture tone-maps the HDR desktop to SDR, but tone-mapping is an
+  // approximation — tell the user up front so a washed-looking stream isn't a mystery.
+  void windowsHdrState().then((s) => {
+    ctx.hdrActive = s?.active === true;
+    if (s?.active) {
+      log.warn(
+        "HDR is ON on this desktop — the remote stream is tone-mapped to SDR and colors may look washed out. Turn HDR off if it bothers you.",
+      );
+    }
+  });
   return { server, config, presence, keepAwake, ctx };
 }
 

@@ -4,6 +4,7 @@ import type { InputController } from "./input";
 import type { Notifications } from "./notifications";
 import type { ScreenView } from "./screen";
 import type { RegionWatchers } from "./watchers";
+import type { Whipository } from "./whipository";
 import { icon, type IconName } from "./icons";
 import { DONATE_URL, GITHUB_URL, REDDIT_URL, dashboardUrl } from "./site";
 import whipMark from "./assets/whip.png";
@@ -14,6 +15,7 @@ interface Deps {
   input: InputController;
   notifications: Notifications;
   watchers: RegionWatchers;
+  whipository: Whipository;
 }
 
 type Tab = "viewer" | "interact" | "type" | "monitor";
@@ -148,6 +150,8 @@ export class Controls {
   private connStatusDot!: HTMLElement;
   private connStatusText!: HTMLElement;
   private connError!: HTMLElement;
+  private connHdr!: HTMLElement;
+  private hostHdr = false;
   private lastError = "";
   private netFps = 0;
   private netRtt: number | null = null;
@@ -238,6 +242,7 @@ export class Controls {
 
   setWelcome(w: WelcomeMessage): void {
     this.deviceName = w.agent.hostname;
+    this.hostHdr = !!w.agent.hdr;
     this.renderStatusText();
     this.displays = w.displays ?? [];
     this.activeDisplay = w.activeDisplay ?? 0;
@@ -294,6 +299,12 @@ export class Controls {
     this.connName = el("span", "wd-conn-value", "—");
     nameRow.appendChild(this.connName);
 
+    // Heads-up when the HOST desktop runs in HDR: the agent tone-maps the stream to SDR, but it
+    // can still look washed compared to the real screen — say so here instead of looking broken.
+    this.connHdr = el("div", "wd-conn-hdr hidden");
+    this.connHdr.textContent =
+      "HDR monitor detected — the image may look washed out. Turn HDR off on that machine if you see issues.";
+
     const routeRow = el("div", "wd-conn-row");
     routeRow.append(el("span", "wd-conn-label", "Connection"));
     this.connRoute = el("div", "wd-conn-route");
@@ -327,8 +338,8 @@ export class Controls {
     );
     feedback.appendChild(links);
 
-    // Row order: Status, Connection, Speed, Machine, Viewers.
-    card.append(head, statusRow, routeRow, speedRow, nameRow, viewersRow, this.connError, disconnect, feedback);
+    // Row order: Status, Connection, Speed, Machine (+HDR note), Viewers.
+    card.append(head, statusRow, routeRow, speedRow, nameRow, this.connHdr, viewersRow, this.connError, disconnect, feedback);
     overlay.appendChild(card);
     this.root.appendChild(overlay);
     this.connectionOverlay = overlay;
@@ -345,6 +356,7 @@ export class Controls {
       this.connError.classList.add("hidden");
     }
     this.connName.textContent = this.deviceName || "Connected device";
+    this.connHdr.classList.toggle("hidden", !this.hostHdr);
     this.connPresence.textContent = String(Math.max(1, this.presenceCount));
     this.connRoute.replaceChildren();
     if (this.transport) {
@@ -614,10 +626,26 @@ export class Controls {
     insert.onclick = () => this.sendText(false);
     const send = iconBtn("send", "Send", "wd-btn wd-go");
     send.onclick = () => this.sendText(true);
-    buttons.append(single, dbl, triple, insert, send);
+    // Whipository: saved reusable prompts. Picking one lands in THIS textarea (never straight on
+    // the host), so the user can still tweak before Insert/Send.
+    const whips = iconBtn("book", "Whips");
+    whips.title = "Whipository — insert a saved prompt";
+    whips.onclick = () => this.deps.whipository.open((text) => this.insertIntoPrompt(text));
+    buttons.append(single, dbl, triple, whips, insert, send);
 
     pane.append(this.promptInput, buttons);
     return pane;
+  }
+
+  /** Insert whip text at the cursor of the Type textarea (replacing any selection). */
+  private insertIntoPrompt(text: string): void {
+    const ta = this.promptInput;
+    const start = ta.selectionStart ?? ta.value.length;
+    const end = ta.selectionEnd ?? start;
+    ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+    const pos = start + text.length;
+    ta.setSelectionRange(pos, pos);
+    ta.focus();
   }
 
   private buildMonitorPane(): HTMLElement {

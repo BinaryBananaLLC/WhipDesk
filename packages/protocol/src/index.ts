@@ -365,6 +365,9 @@ export interface WelcomeMessage {
     /** Node's `process.platform`, e.g. "darwin", "win32", "linux". */
     platform: string;
     hostname: string;
+    /** True when the host desktop runs in HDR ("advanced color") — the stream is tone-mapped to
+     * SDR and may look washed compared to the real screen. Optional: older agents omit it. */
+    hdr?: boolean;
   };
   screen: ScreenInfo;
   capture: {

@@ -1,4 +1,6 @@
 import type { ScreenView } from "./screen";
+import type { Whipository } from "./whipository";
+import { icon } from "./icons";
 
 export interface PlacementResult {
   /** Normalized [0,1] desktop point the user targeted. */
@@ -12,6 +14,8 @@ export interface PlacementOptions {
   withText: boolean;
   hint: string;
   confirmLabel: string;
+  /** When set (and `withText`), a tiny Whips button lets the user insert a saved prompt. */
+  whipository?: Whipository;
 }
 
 /**
@@ -47,7 +51,27 @@ export function placeTarget(
     textInput = document.createElement("textarea");
     textInput.className = "wd-input wd-input-area wd-place-text";
     textInput.placeholder = "Type the prompt to send…";
-    bar.appendChild(textInput);
+    if (opts.whipository) {
+      // Prompt box + a tiny Whipository button beside it: inserting a saved whip fills THIS box
+      // (the user still confirms the target), never the host directly.
+      const row = document.createElement("div");
+      row.className = "wd-place-text-row";
+      const whips = document.createElement("button");
+      whips.type = "button";
+      whips.className = "wd-btn wd-icon-only wd-place-whips";
+      whips.title = "Whipository — insert a saved prompt";
+      whips.setAttribute("aria-label", "Insert a saved prompt");
+      whips.appendChild(icon("book"));
+      whips.onclick = () =>
+        opts.whipository!.open((text) => {
+          textInput!.value = textInput!.value ? `${textInput!.value}${text}` : text;
+          textInput!.focus();
+        });
+      row.append(textInput, whips);
+      bar.appendChild(row);
+    } else {
+      bar.appendChild(textInput);
+    }
   }
 
   const buttons = document.createElement("div");

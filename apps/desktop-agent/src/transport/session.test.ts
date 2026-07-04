@@ -63,6 +63,7 @@ function makeCtx(stateDir: string, withPin: boolean): Harness {
     activeDisplay: 0,
     videoAvailable: false,
     video: null,
+    hdrActive: false,
     controllers: new Set<Controller>(),
     addController: (c: Controller) => void (ctx as { controllers: Set<Controller> }).controllers.add(c),
     removeController: (c: Controller) => void (ctx as { controllers: Set<Controller> }).controllers.delete(c),

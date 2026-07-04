@@ -2,6 +2,7 @@ import type { AgentKind, MonitorInfo, MonitorSessionInfo, ScheduledAction, Timer
 import type { ControllerTransport } from "./core";
 import type { Notifications } from "./notifications";
 import type { ScreenView } from "./screen";
+import type { Whipository } from "./whipository";
 import { icon } from "./icons";
 import { placeTarget } from "./placement";
 import { GITHUB_URL } from "./site";
@@ -99,6 +100,7 @@ export class RegionWatchers {
     private readonly view: ScreenView,
     private readonly notifications: Notifications,
     private readonly requestNotifications: () => void | Promise<void> = () => {},
+    private readonly whipository?: Whipository,
   ) {
     this.overlay = el("div", "wd-dialog-overlay hidden");
     this.overlay.addEventListener("pointerdown", (e) => {
@@ -607,7 +609,7 @@ export class RegionWatchers {
       placeTarget(
         this.view,
         this.root,
-        { withText: kind === "text", hint, confirmLabel: "Confirm target" },
+        { withText: kind === "text", hint, confirmLabel: "Confirm target", whipository: this.whipository },
         (result) => {
           if (!result) {
             overlay.style.display = ""; // placement cancelled -> back to the form
