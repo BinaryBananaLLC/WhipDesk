@@ -289,8 +289,8 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
         const message = (error as Error).message ?? String(error);
         log.warn("timer action failed:", message);
         hub.emit({
-          title: t.label || "WhipDesk timer",
-          body: `Timer reached zero, but its scheduled action failed: ${message.slice(0, 120)}`,
+          title: t.label || "Scheduled work",
+          body: `Time's up, but the scheduled action failed: ${message.slice(0, 120)}`,
           level: "error",
           source: "timer",
         });
@@ -298,8 +298,8 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       }
     }
     hub.emit({
-      title: t.label || "WhipDesk timer",
-      body: a ? "Timer reached zero — scheduled action sent." : "Timer reached zero.",
+      title: t.label || "Scheduled work",
+      body: a ? "Time's up — scheduled action done." : "Time's up.",
       level: "success",
       source: "timer",
     });
@@ -311,8 +311,8 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   for (const t of loadTimers(config.stateDir)) {
     if (t.fireAtMs <= Date.now()) {
       hub.emit({
-        title: t.label || "WhipDesk timer",
-        body: "This timer came due while WhipDesk was not running — its action was NOT performed.",
+        title: t.label || "Scheduled work",
+        body: "This came due while WhipDesk was not running — its action was NOT performed.",
         level: "error",
         source: "timer",
       });

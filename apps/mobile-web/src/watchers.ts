@@ -4,6 +4,7 @@ import type { Notifications } from "./notifications";
 import type { ScreenView } from "./screen";
 import { icon } from "./icons";
 import { placeTarget } from "./placement";
+import { GITHUB_URL } from "./site";
 
 let counter = 0;
 function uid(): string {
@@ -71,7 +72,7 @@ function monStateText(state: string): string {
 
 /**
  * Screen-region change notifications. User flow:
- *   bell → dialog (list existing + "Add") → drag/resize a rectangle on the screen →
+ *   whip button → dialog (list existing + "Add") → drag/resize a rectangle on the screen →
  *   "Create" sends `watch-add`. The host watches those pixels and fires a notification when
  *   they change (e.g. an AI agent's status icon). Regions are stored host-side; the dialog
  *   reflects the authoritative list from `watchers` messages.
@@ -116,17 +117,17 @@ export class RegionWatchers {
     const ul = el("ul", "wd-help-list");
     const li1 = el("li");
     li1.append(
-      el("strong", undefined, "Alerts"),
-      document.createTextNode(" — watch part of the screen and ping you when it changes (e.g. your agent finishes)."),
+      el("strong", undefined, "Scheduled work"),
+      document.createTextNode(" — after a set time: notify you, click a button, or click, type & send a whole prompt (e.g. resume work the moment a session limit resets)."),
     );
     const li2 = el("li");
     li2.append(
-      el("strong", undefined, "Timers"),
-      document.createTextNode(" — ping you after a set time, and can auto-click or send a prompt when they fire."),
+      el("strong", undefined, "Alerts"),
+      document.createTextNode(" — watch part of the screen and ping you when it changes visually (e.g. your agent finishes)."),
     );
     const li3 = el("li");
     li3.append(
-      el("strong", undefined, "Session Monitoring"),
+      el("strong", undefined, "AI Monitoring"),
       document.createTextNode(" — pick a running AI session and get pinged the moment the agent stops working (it's waiting on you or has gone idle)."),
     );
     ul.append(li1, li2, li3);
@@ -140,20 +141,20 @@ export class RegionWatchers {
     this.permissionRow = el("div", "wd-perm-row");
     this.list = el("div", "wd-watch-list");
 
+    const addSchedule = el("button", "wd-btn wd-go");
+    addSchedule.append(icon("clock"), el("span", "wd-btn-label", "Schedule work"));
+    addSchedule.onclick = () => this.beginSchedule();
+
     const add = el("button", "wd-btn wd-go");
     add.append(icon("plus"), el("span", "wd-btn-label", "Add alert"));
     add.onclick = () => this.beginSelection();
 
-    const addTimer = el("button", "wd-btn wd-go");
-    addTimer.append(icon("clock"), el("span", "wd-btn-label", "Add timer"));
-    addTimer.onclick = () => this.beginTimer();
-
     const addMonitor = el("button", "wd-btn wd-go");
-    addMonitor.append(icon("activity"), el("span", "wd-btn-label", "Add Session Monitoring"));
+    addMonitor.append(icon("activity"), el("span", "wd-btn-label", "Add AI Monitoring"));
     addMonitor.onclick = () => this.beginMonitor();
 
     const actions = el("div", "wd-dialog-actions wd-actions-stack");
-    actions.append(add, addTimer, addMonitor);
+    actions.append(addSchedule, add, addMonitor);
 
     card.append(head, help, this.permissionRow, this.list, actions);
     this.overlay.appendChild(card);
@@ -236,27 +237,10 @@ export class RegionWatchers {
   private renderList(): void {
     this.list.replaceChildren();
     if (this.regions.length === 0 && this.timers.length === 0 && this.monitors.length === 0) {
-      this.list.appendChild(el("p", "wd-dialog-help", "No alerts, timers, or session monitors yet."));
+      this.list.appendChild(el("p", "wd-dialog-help", "No scheduled work, alerts, or AI monitors yet."));
       return;
     }
-    for (const r of this.regions) {
-      const row = el("div", "wd-watch-row");
-      const name = el("button", "wd-watch-name", r.label);
-      name.title = "Edit this alert";
-      name.onclick = () => this.beginSelection(r);
-      row.appendChild(name);
-      const del = el("button", "wd-btn wd-icon-only");
-      del.appendChild(icon("trash"));
-      del.setAttribute("aria-label", `Remove ${r.label}`);
-      del.onclick = () => {
-        this.conn.send({ type: "watch-remove", id: r.id });
-        // Optimistic: drop it now so the button feels instant; the host's broadcast reconciles.
-        this.regions = this.regions.filter((x) => x.id !== r.id);
-        this.renderList();
-      };
-      row.appendChild(del);
-      this.list.appendChild(row);
-    }
+    // Same order as the help list + buttons: scheduled work, alerts, AI monitors.
     for (const t of this.timers) {
       const row = el("div", "wd-watch-row");
       const info = el("div", "wd-timer-info");
@@ -273,6 +257,24 @@ export class RegionWatchers {
         this.conn.send({ type: "timer-remove", id: t.id });
         // Optimistic: drop it now so Cancel works instantly even if the host's echo lags.
         this.timers = this.timers.filter((x) => x.id !== t.id);
+        this.renderList();
+      };
+      row.appendChild(del);
+      this.list.appendChild(row);
+    }
+    for (const r of this.regions) {
+      const row = el("div", "wd-watch-row");
+      const name = el("button", "wd-watch-name", r.label);
+      name.title = "Edit this alert";
+      name.onclick = () => this.beginSelection(r);
+      row.appendChild(name);
+      const del = el("button", "wd-btn wd-icon-only");
+      del.appendChild(icon("trash"));
+      del.setAttribute("aria-label", `Remove ${r.label}`);
+      del.onclick = () => {
+        this.conn.send({ type: "watch-remove", id: r.id });
+        // Optimistic: drop it now so the button feels instant; the host's broadcast reconciles.
+        this.regions = this.regions.filter((x) => x.id !== r.id);
         this.renderList();
       };
       row.appendChild(del);
@@ -440,24 +442,25 @@ export class RegionWatchers {
   }
 
   /**
-   * Create a one-shot timer: a reminder, plus an optional action the host fires when it hits zero —
-   * click a button, click + press Enter, or click + type & send a prompt. Built for AI session
-   * cooldowns: set it for when Claude/Copilot frees up and have it auto-resume.
+   * Schedule work: one thing the host does automatically after a set time. Four rungs, simplest
+   * first — send a notification, click a button, click + press Enter, or click + type & send a
+   * whole prompt. Built for AI session cooldowns: schedule the click or the next prompt now, and
+   * it happens the moment Claude/Copilot frees up.
    */
-  private beginTimer(): void {
+  private beginSchedule(): void {
     this.close();
 
     const overlay = el("div", "wd-dialog-overlay");
     const dismiss = () => {
       overlay.remove();
-      this.open(); // back to the Alerts list
+      this.open(); // back to the Auto-Whips list
     };
     overlay.addEventListener("pointerdown", (e) => {
       if (e.target === overlay) dismiss();
     });
     const card = el("div", "wd-dialog");
     const head = el("div", "wd-dialog-head");
-    head.append(el("h2", "", "Set timer"));
+    head.append(el("h2", "", "Schedule work"));
     const x = el("button", "wd-dialog-x");
     x.appendChild(icon("x"));
     x.onclick = dismiss;
@@ -466,11 +469,11 @@ export class RegionWatchers {
     const help = el(
       "p",
       "wd-dialog-help",
-      "Waiting for a session limit to reset? Get notified when the time's up. You can also schedule an action for the moment it hits zero — click Retry, or enter a new prompt.",
+      "Have this machine do something for you after a set time — from a simple notification to clicking a button or typing & sending a whole prompt. Waiting out a session limit? Schedule the retry click or the next prompt now, and it runs the moment the cooldown ends.",
     );
 
     const durRow = el("div", "wd-form-row");
-    durRow.appendChild(el("label", "wd-form-label", "Remind me in"));
+    durRow.appendChild(el("label", "wd-form-label", "Run in"));
 
     const hours = el("input", "wd-input wd-input-num");
     hours.type = "number";
@@ -528,13 +531,13 @@ export class RegionWatchers {
     labelRow.appendChild(label);
 
     const actRow = el("div", "wd-form-row");
-    actRow.appendChild(el("label", "wd-form-label", "When it fires"));
+    actRow.appendChild(el("label", "wd-form-label", "What to do"));
     const sel = el("select", "wd-input");
     for (const [value, text] of [
-      ["none", "Just remind me"],
+      ["none", "Send me a notification"],
       ["click", "Click a button"],
-      ["key", "Click & press Enter"],
-      ["text", "Click, type & send a prompt"],
+      ["key", "Click to focus & press Enter"],
+      ["text", "Click to focus, type & press Enter"],
     ] as const) {
       const o = document.createElement("option");
       o.value = value;
@@ -548,10 +551,10 @@ export class RegionWatchers {
     cancel.append(el("span", "wd-btn-label", "Cancel"));
     cancel.onclick = dismiss;
     const next = el("button", "wd-btn wd-go");
-    const nextLabel = el("span", "wd-btn-label", "Start timer");
+    const nextLabel = el("span", "wd-btn-label", "Schedule");
     next.append(icon("clock"), nextLabel);
     const syncNext = () => {
-      nextLabel.textContent = sel.value === "none" ? "Start timer" : "Next: place target";
+      nextLabel.textContent = sel.value === "none" ? "Schedule" : "Next: place target";
     };
     sel.onchange = syncNext;
     syncNext();
@@ -570,12 +573,16 @@ export class RegionWatchers {
     const startTimer = (action: ScheduledAction | undefined) => {
       const id = uid();
       const fireInMs = durationMs()!;
-      const lbl = label.value.trim() || `Timer (${spanText()})`;
+      const lbl = label.value.trim() || `Scheduled work (${spanText()})`;
       this.conn.send({ type: "timer-add", id, fireInMs, label: lbl, action });
       // Optimistic: show it at once; the authoritative `timers` broadcast reconciles.
       this.timers = [...this.timers, { id, label: lbl, fireAtMs: Date.now() + fireInMs, hasAction: !!action }];
       if (this.notifications.permission === "default") void this.requestNotifications();
-      this.notifications.flash("Timer started", `"${lbl}" — I'll ping you in ${spanText()}.`, "success");
+      this.notifications.flash(
+        "Work scheduled",
+        `"${lbl}" — ${action ? "runs" : "I'll ping you"} in ${spanText()}.`,
+        "success",
+      );
       dismiss();
     };
 
@@ -593,10 +600,10 @@ export class RegionWatchers {
       overlay.style.display = "none";
       const hint =
         kind === "text"
-          ? "Drag the crosshair onto the target input and type your prompt. The timer will click it to focus, insert the text and press Enter when time is up."
+          ? "Drag the crosshair onto the target input and type your prompt. When time's up it will be clicked to focus, the text inserted, and Enter pressed."
           : kind === "key"
-            ? "Drag the crosshair onto the field. The timer will click it to focus and press Enter when time is up."
-            : "Drag the crosshair onto the button or UI. The timer will click it when time is up.";
+            ? "Drag the crosshair onto the field. When time's up it will be clicked to focus and Enter pressed."
+            : "Drag the crosshair onto the button or UI. It will be clicked when time's up.";
       placeTarget(
         this.view,
         this.root,
@@ -641,7 +648,7 @@ export class RegionWatchers {
     });
     const card = el("div", "wd-dialog");
     const head = el("div", "wd-dialog-head");
-    head.append(el("h2", "", "Monitor a session"));
+    head.append(el("h2", "", "Monitor an AI session"));
     const x = el("button", "wd-dialog-x");
     x.appendChild(icon("x"));
     x.onclick = dismiss;
@@ -650,14 +657,14 @@ export class RegionWatchers {
     const help = el(
       "p",
       "wd-dialog-help",
-      "Pick a running AI session to watch. WhipDesk finds them automatically — no setup, no wrappers. You'll get one ping the moment the agent stops working (it's waiting on you or has gone idle).",
+      "Pick a running AI session to watch. WhipDesk finds AI sessions automatically — no setup, no wrappers. You'll get one ping the moment the AI session stops working (it's waiting on you or has gone idle).",
     );
 
     const pickHead = el("div", "wd-mon-pick-head");
     const rescan = el("button", "wd-btn");
     rescan.append(el("span", "wd-btn-label", "Rescan"));
     rescan.onclick = () => this.conn.send({ type: "monitor-scan" });
-    pickHead.append(el("span", "wd-form-label", "Running sessions"), rescan);
+    pickHead.append(el("span", "wd-form-label", "Running AI sessions"), rescan);
 
     const listWrap = el("div", "wd-mon-pick");
     let selectedKey = "";
@@ -760,7 +767,23 @@ export class RegionWatchers {
     };
     bar.append(cancel, add);
 
-    card.append(head, help, pickHead, listWrap, alwaysRow, bar);
+    // Honest fine print: detection is heuristic (processes + transcripts across many AI tools and
+    // setups), so it can miss a session — own that, and point people at the repo to report or fix.
+    const caveat = el("p", "wd-mon-caveat");
+    const gh = document.createElement("a");
+    gh.href = GITHUB_URL;
+    gh.target = "_blank";
+    gh.rel = "noopener noreferrer";
+    gh.textContent = "report it as a GitHub issue";
+    caveat.append(
+      document.createTextNode(
+        "* Due to the variety of AI sessions and setups, this sometimes doesn't detect every AI session. Please ",
+      ),
+      gh,
+      document.createTextNode(" — or even better, submit a PR with a fix."),
+    );
+
+    card.append(head, help, pickHead, listWrap, alwaysRow, caveat, bar);
     overlay.appendChild(card);
     this.root.appendChild(overlay);
 

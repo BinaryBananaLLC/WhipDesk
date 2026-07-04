@@ -158,7 +158,14 @@ textarea {
 .wd-transport[data-kind="lan"] {
   background: #3b82f6;
 }
-/* alerts bell — a standalone button pinned to the top-right corner, with a count badge */
+/* Auto-Whips button — a standalone button pinned to the top-right corner, with a count badge.
+   Shows the whip brand mark (the feature is about automating work, not notification settings). */
+.wd-whip-mark {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
+}
 .wd-bell {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 8px);
@@ -842,6 +849,17 @@ textarea {
 .wd-help-note {
   margin: 0;
   font-style: italic;
+}
+/* AI-monitoring fine print: detection is heuristic and can miss sessions — say so, tiny. */
+.wd-mon-caveat {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.wd-mon-caveat a {
+  color: inherit;
+  text-decoration: underline;
 }
 .wd-watch-list {
   display: flex;

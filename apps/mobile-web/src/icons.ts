@@ -17,6 +17,8 @@ export type IconName =
   | "pointer"
   | "scroll-up"
   | "scroll-down"
+  | "page-up"
+  | "page-down"
   | "mouse-left"
   | "mouse-right"
   | "double-click"
@@ -48,6 +50,9 @@ const PATHS: Record<IconName, string> = {
   pointer: '<path d="m4 4 6 16 2.5-6.5L19 11Z"/>',
   "scroll-up": '<path d="m6 14 6-6 6 6"/><path d="M12 8v11"/>',
   "scroll-down": '<path d="m6 10 6 6 6-6"/><path d="M12 16V5"/>',
+  // Like scroll-up/down with a bar: jump a whole page toward the top/bottom.
+  "page-up": '<path d="M5 4h14"/><path d="m7 13 5-5 5 5"/><path d="M12 9v11"/>',
+  "page-down": '<path d="M5 20h14"/><path d="m7 11 5 5 5-5"/><path d="M12 15V4"/>',
   "mouse-left": '<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v8H6V8"/>',
   "mouse-right": '<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v8h6V8"/>',
   "double-click": '<path d="m4 4 6 16 2.5-6.5L19 11Z"/><path d="M18 4v3M21 6h-3"/>',

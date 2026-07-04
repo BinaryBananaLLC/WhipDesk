@@ -4,9 +4,10 @@ import type { ScreenView } from "./screen";
 
 /**
  * Interaction model selected by the UI tabs:
- *  - "viewer": look around safely. One finger drags the POINTER (shows the ring) but never
- *    clicks; you click with the explicit Click button. With drag-to-scroll on, one finger
- *    scrolls instead. Two fingers: pinch to zoom, drag to pan/scroll.
+ *  - "viewer": direct interaction, like the machine's own touchscreen. One finger drags the
+ *    POINTER (shows the ring); a tap CLICKS where you touch, and fast consecutive taps are
+ *    double/triple clicks. With the Pan tool or drag-to-scroll on, one finger pans/scrolls
+ *    instead and taps are inert. Two fingers: pinch to zoom, drag to pan/scroll.
  *  - "mouse": trackpad-style. Tap = click where you touch; drag = move the pointer; the
  *    Right/Double/Drag-hold buttons and long-press = right click cover the rest.
  *  - "touch": touchscreen simulation. Tap = tap (click) where you touch; swipe = scroll.
@@ -350,14 +351,16 @@ export class InputController {
     const duration = performance.now() - ptr.startT;
     const wasTap = !ptr.moved && duration < TAP_MS && this.pointers.size === 0;
     if (!wasTap || this.dragScroll) return;
+    // The Pan tool owns one-finger input: grabbing the view must never click through.
+    if (this.isPanning()) return;
 
-    // Tap = click at the touched point in Mouse and Touch modes. Viewer never taps-to-click.
-    if (this.interaction === "mouse" || this.interaction === "touch") {
-      const n = this.view.canvasToNorm(ptr.startX, ptr.startY);
-      this.moveCursor(n.nx, n.ny);
-      this.send({ type: "pointer", action: "click", button: "left", x: n.nx, y: n.ny });
-      navigator.vibrate?.(12);
-    }
-    // viewer: tap positioned the pointer in onDown; click with the Click button.
+    // Tap = click at the touched point, in EVERY mode — Viewer included, which also covers the
+    // Type and Monitor tabs: the screen behaves like the machine's own touchscreen. Consecutive
+    // fast taps are consecutive clicks, so a double-tap IS a double click and a triple-tap a
+    // triple (the clicks ride one ordered channel and arrive as tightly as they were tapped).
+    const n = this.view.canvasToNorm(ptr.startX, ptr.startY);
+    this.moveCursor(n.nx, n.ny);
+    this.send({ type: "pointer", action: "click", button: "left", x: n.nx, y: n.ny });
+    navigator.vibrate?.(12);
   }
 }

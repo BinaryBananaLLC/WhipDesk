@@ -6,6 +6,7 @@ import type { ScreenView } from "./screen";
 import type { RegionWatchers } from "./watchers";
 import { icon, type IconName } from "./icons";
 import { DONATE_URL, GITHUB_URL, REDDIT_URL, dashboardUrl } from "./site";
+import whipMark from "./assets/whip.png";
 
 interface Deps {
   conn: ControllerTransport;
@@ -124,7 +125,7 @@ function transportLabel(t: string): string {
  * The mobile UI: a top status bar + a collapsible bottom ribbon with one tab per task.
  * Only the active tab's controls are shown, so buttons never stack or overlap.
  *
- *  - Viewer:   look around safely — zoom −/+, Click (no accidental clicks), scroll.
+ *  - Viewer:   zoom −/+, pan, scroll/page; tap the screen to click, just like the real device.
  *  - Interact: full control — Mouse|Touch segment, then Left/Right/Double/Drag/Scroll.
  *  - Type:     write text — textarea + special keys + Insert (no Enter) / Send (Enter).
  *  - Monitor:  pick which display to view + control.
@@ -413,12 +414,21 @@ export class Controls {
     this.statusbar = status;
     this.buildConnectionDialog();
 
-    const bell = iconBtn("bell", "", "wd-bell");
-    bell.setAttribute("aria-label", "Auto-Whips");
-    bell.title = "Auto-Whips";
-    bell.appendChild(this.alertBadge);
-    bell.onclick = () => this.deps.watchers.open();
-    this.root.append(status, bell);
+    // Auto-Whips button: the project's whip mark, not a notification bell — the dialog is about
+    // putting agents to work automatically (scheduled work, alerts, AI monitoring), not about
+    // notification settings.
+    const autoWhips = el("button", "wd-bell");
+    const whipImg = document.createElement("img");
+    whipImg.src = whipMark;
+    whipImg.alt = "";
+    whipImg.decoding = "async";
+    whipImg.className = "wd-whip-mark";
+    autoWhips.appendChild(whipImg);
+    autoWhips.setAttribute("aria-label", "Auto-Whips");
+    autoWhips.title = "Auto-Whips";
+    autoWhips.appendChild(this.alertBadge);
+    autoWhips.onclick = () => this.deps.watchers.open();
+    this.root.append(status, autoWhips);
 
     // --- bottom ribbon ---
     const ribbon = el("div", "wd-ribbon");
@@ -457,7 +467,8 @@ export class Controls {
   }
 
   private buildViewerPane(): HTMLElement {
-    const { view, input } = this.deps;
+    const { view, input, conn } = this.deps;
+    // No Click button: tapping the screen clicks directly in every tab (see InputController).
     const pane = el("div", "wd-pane wd-pane-single-row");
 
     const zoomOut = holdBtn(iconBtn("minus", "", "wd-btn wd-icon-only"), () => view.zoomBy(0.9));
@@ -465,6 +476,17 @@ export class Controls {
 
     const scrollUp = holdBtn(iconBtn("scroll-up", "", "wd-btn wd-icon-only"), () => input.scrollStep(-6));
     const scrollDown = holdBtn(iconBtn("scroll-down", "", "wd-btn wd-icon-only"), () => input.scrollStep(6));
+    // Page Up/Down ride the key channel (supported by every input backend on win/mac/linux).
+    const pageUp = holdBtn(iconBtn("page-up", "", "wd-btn wd-icon-only"), () =>
+      conn.send({ type: "key", key: "PageUp" }),
+    );
+    pageUp.setAttribute("aria-label", "Page up");
+    pageUp.title = "Page up";
+    const pageDown = holdBtn(iconBtn("page-down", "", "wd-btn wd-icon-only"), () =>
+      conn.send({ type: "key", key: "PageDown" }),
+    );
+    pageDown.setAttribute("aria-label", "Page down");
+    pageDown.title = "Page down";
     const dragScroll = iconBtn("hand", "", "wd-btn wd-icon-only");
     dragScroll.setAttribute("aria-label", "Drag to scroll");
     dragScroll.title = "Drag to scroll";
@@ -487,14 +509,10 @@ export class Controls {
       dragScroll.classList.toggle("on", input.getDragScroll()); // mutually exclusive
     };
 
-    const click = iconBtn("pointer", "Click", "wd-btn wd-go");
-    click.onclick = () => input.click("left");
-
     pane.append(
       group("Zoom", zoomOut, zoomIn),
       group("Pan", pan),
-      group("Scroll", scrollUp, scrollDown, dragScroll),
-      group("Pointer", click),
+      group("Scroll", scrollUp, scrollDown, pageUp, pageDown, dragScroll),
     );
     return pane;
   }
@@ -640,8 +658,9 @@ export class Controls {
     for (const [key, b] of this.tabButtons) b.classList.toggle("on", key === tab);
     for (const [key, pane] of this.tabPanes) pane.classList.toggle("hidden", key !== tab);
 
-    // Map the tab to an interaction model. Interact uses the currently selected mode;
-    // the other tabs only aim the pointer (no accidental clicks from screen taps).
+    // Map the tab to an interaction model. Interact uses the currently selected mode; the other
+    // tabs use "viewer", where a tap also clicks directly (double/triple taps = double/triple
+    // clicks) unless the Pan or drag-to-scroll tool is active.
     this.deps.input.setInteraction(tab === "interact" ? this.interactMode : "viewer");
     if (tab === "type") window.setTimeout(() => this.promptInput.focus(), 50);
   }
