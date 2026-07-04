@@ -205,15 +205,46 @@ async function start(): Promise<void> {
 
   // As the user zooms/pans, ask the host to crop the desktop track to just the visible region
   // (sharp, native-res). The ScreenView tracks the gesture instantly (digital zoom of the current
-  // frame); we only ask the host to RE-CROP once the gesture is RELEASED — ScreenView gates this
-  // callback behind begin/endViewGesture, so a pinch/pan never re-crops mid-drag (which could land a
-  // stale crop). Discrete zoom-button taps fire outside a gesture and coalesce via a short debounce.
-  // Returning to fit is immediate. The host echoes `screen-region`, which ScreenView uses to place
-  // the frame at exactly its desktop rectangle (no stretch).
-  view.setOnView((region) => {
+  // frame); the host is only asked to RE-CROP once the interaction SETTLES. Every re-crop restarts
+  // ffmpeg on the host, and a swipe burst that restarts it once per swipe drives macOS screen
+  // capture into a zero-frame state that takes tens of seconds to clear — so a finger landing
+  // during the settle window HOLDS the pending request, and only the last lift of a swipe
+  // sequence (followed by a quiet settle period) sends ONE request for where the view ended up.
+  // The region is read at SEND time, so the request is always the freshest view. Returning to fit
+  // is immediate. The host echoes `screen-region`, which ScreenView uses to place the frame at
+  // exactly its desktop rectangle (no stretch).
+  const VIEWPORT_SETTLE_MS = 400;
+  let viewChangedThisGesture = false;
+  let sendHeldByGesture = false;
+  const scheduleViewportSend = () => {
     const z = view.getZoom() > 1.01;
     window.clearTimeout(viewportTimer);
-    viewportTimer = window.setTimeout(() => sendViewport(z ? region : { x: 0, y: 0, w: 1, h: 1 }), z ? 120 : 0);
+    viewportTimer = window.setTimeout(
+      () => {
+        viewportTimer = 0;
+        sendViewport(view.getZoom() > 1.01 ? view.getVisibleRegion() : { x: 0, y: 0, w: 1, h: 1 });
+      },
+      z ? VIEWPORT_SETTLE_MS : 0,
+    );
+  };
+  view.setOnView(() => {
+    viewChangedThisGesture = true;
+    scheduleViewportSend();
+  });
+  view.setOnGesture((active) => {
+    if (active) {
+      sendHeldByGesture = viewportTimer !== 0;
+      if (sendHeldByGesture) {
+        window.clearTimeout(viewportTimer);
+        viewportTimer = 0;
+      }
+      viewChangedThisGesture = false;
+    } else if (!viewChangedThisGesture && sendHeldByGesture) {
+      // The gesture that held a pending send turned out to be a tap (view unchanged) — re-arm
+      // the held request so it's never silently lost.
+      sendHeldByGesture = false;
+      scheduleViewportSend();
+    }
   });
 
   conn.on("status", (s) => {
@@ -254,6 +285,7 @@ async function start(): Promise<void> {
       // stale `lastSent` is swallowed as "already sent" and the sharp crop never returns.
       lastSent = null;
       window.clearTimeout(viewportTimer);
+      viewportTimer = 0;
       sendViewport(view.getZoom() > 1.01 ? view.getVisibleRegion() : { x: 0, y: 0, w: 1, h: 1 });
     }
   });

@@ -92,6 +92,7 @@ export class ScreenView {
   private cursor: { nx: number; ny: number } | null = null;
   private onZoomCb?: (zoom: number) => void;
   private onViewCb?: (region: Region) => void;
+  private onGestureCb?: (active: boolean) => void;
 
   // While a pan/zoom gesture is in progress we DON'T ask the host to re-crop: re-cropping mid-drag
   // thrashes the capture and can land a stale crop while the finger is still moving. We mark the
@@ -465,6 +466,12 @@ export class ScreenView {
   setOnView(cb: (region: Region) => void): void {
     this.onViewCb = cb;
   }
+  /** Notified when a touch gesture begins (true) / ends (false). The end notification fires AFTER
+   * the end-of-gesture view emission, so "gesture ended without changing the view" is detectable
+   * — the controller uses this to hold host re-crops while the user is still interacting. */
+  setOnGesture(cb: (active: boolean) => void): void {
+    this.onGestureCb = cb;
+  }
   /**
    * Bracket a pan/zoom gesture so the host re-crop is deferred until it FINISHES. The input layer
    * calls beginViewGesture() when the first finger lands and endViewGesture() when the last finger
@@ -474,6 +481,7 @@ export class ScreenView {
    */
   beginViewGesture(): void {
     this.gestureActive = true;
+    this.onGestureCb?.(true);
   }
   endViewGesture(): void {
     if (!this.gestureActive) return;
@@ -482,6 +490,7 @@ export class ScreenView {
       this.viewDirty = false;
       this.onViewCb?.(this.getVisibleRegion());
     }
+    this.onGestureCb?.(false);
   }
   private emitView(): void {
     if (this.gestureActive) {
