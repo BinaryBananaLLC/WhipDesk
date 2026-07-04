@@ -553,3 +553,8 @@ jobs:
             git commit -m "whipdesk $VERSION"
             git push -u origin main
           fi
+          PUBLISHED_SHA=$(git rev-parse HEAD)
+          RAW_URL="https://raw.githubusercontent.com/BinaryBananaLLC/scoop-whipdesk/${PUBLISHED_SHA}/bucket/whipdesk.json"
+          curl -fsSL "$RAW_URL" -o published.json
+          grep -F '"version": '"\"$VERSION\"" published.json >/dev/null
+          echo "Validated published manifest at $RAW_URL"
