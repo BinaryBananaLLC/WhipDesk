@@ -22,6 +22,7 @@ import { startFileWatcher } from "./watchers/file-pattern";
 import { videoEncodingAvailable, VideoHub } from "./capture/encoder";
 import { SessionMonitor } from "./monitor/monitor";
 import { loadAlwaysAgents, saveAlwaysAgents } from "./monitor/always-store";
+import { loadTimers, saveTimers, type StoredTimer } from "./timer-store";
 import { isPackaged } from "./util/paths";
 import { announceUpdate, checkForUpdate } from "./util/update-check";
 import { log } from "./logger";
@@ -202,10 +203,12 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   let viewport: Viewport = { x: 0, y: 0, w: 1, h: 1 };
 
   // One-shot timers: reminders + an optional scheduled action (auto-click/keypress when an AI
-  // tool's cooldown ends). In-memory; lost on restart. On fire the action runs, then a
-  // notification goes out (to connected controllers AND the cloud push relay, so the user is
-  // pinged even with the app closed).
-  const timers = new Map<string, { id: string; label: string; fireAtMs: number; action?: ScheduledAction }>();
+  // tool's cooldown ends). Persisted to the state dir so an agent restart can't silently swallow
+  // a scheduled action (see timer-store.ts). On fire the action runs, then a notification goes
+  // out (to connected controllers AND the cloud push relay, so the user is pinged even with the
+  // app closed).
+  const timers = new Map<string, StoredTimer>();
+  const persistTimers = () => saveTimers(config.stateDir, [...timers.values()]);
   const listTimers = (): TimerInfo[] =>
     [...timers.values()].map((t) => ({ id: t.id, label: t.label, fireAtMs: t.fireAtMs, hasAction: !!t.action }));
   const broadcastTimers = () => {
@@ -236,6 +239,7 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     const t = timers.get(id);
     if (!t) return;
     timers.delete(id); // delete BEFORE any await so the ticker can never double-fire this timer
+    persistTimers();
     broadcastTimers();
     const a = t.action;
     if (a) {
@@ -246,7 +250,37 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
         // the first keystrokes (e.g. an Enter that submits a prompt) can land before the field is
         // ready and get dropped. This is the robustness gap that made auto-prompt timers flaky.
         if (typeof a.x === "number" && typeof a.y === "number") {
-          await input.click(a.button ?? "left", false, a.x, a.y);
+          // The click coords are relative to the display the timer was SCHEDULED on — the active
+          // display may have changed since. Temporarily aim the input mapper at that display for
+          // the click (keyboard input doesn't use display geometry, so restore right after). If
+          // that display is gone, fail loudly rather than click the same spot on a wrong screen.
+          const pinnedId = t.displayId;
+          let restoreInput: (() => void) | null = null;
+          if (pinnedId !== undefined && pinnedId !== activeDisplay) {
+            const pinned = displays.find((d) => d.id === pinnedId);
+            if (!pinned || pinned.width <= 0 || pinned.height <= 0) {
+              throw new Error(`the display it was scheduled on ([${pinnedId}]) is no longer connected`);
+            }
+            input.setActiveDisplay({
+              originX: pinned.originX,
+              originY: pinned.originY,
+              width: pinned.width,
+              height: pinned.height,
+            });
+            restoreInput = () => {
+              const cur = displays.find((d) => d.id === activeDisplay);
+              input.setActiveDisplay(
+                cur && cur.width > 0 && cur.height > 0
+                  ? { originX: cur.originX, originY: cur.originY, width: cur.width, height: cur.height }
+                  : null,
+              );
+            };
+          }
+          try {
+            await input.click(a.button ?? "left", false, a.x, a.y);
+          } finally {
+            restoreInput?.();
+          }
           if (a.kind === "key" || a.kind === "text") await delay(250);
         }
         if (a.kind === "key" && a.key) await input.keyTap(a.key);
@@ -270,6 +304,27 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       source: "timer",
     });
   };
+
+  // Restore persisted timers so an agent restart can't silently swallow a scheduled action. Ones
+  // that came due while the agent was DOWN are reported as missed, never blindly executed hours
+  // late into whatever is on screen now.
+  for (const t of loadTimers(config.stateDir)) {
+    if (t.fireAtMs <= Date.now()) {
+      hub.emit({
+        title: t.label || "WhipDesk timer",
+        body: "This timer came due while WhipDesk was not running — its action was NOT performed.",
+        level: "error",
+        source: "timer",
+      });
+    } else {
+      timers.set(t.id, t);
+    }
+  }
+  persistTimers(); // drop the missed ones from disk
+  if (timers.size > 0) {
+    ensureTimerTicker();
+    log.info(`restored ${timers.size} pending timer${timers.size === 1 ? "" : "s"} from disk`);
+  }
 
   const captureOnce = async (): Promise<"ok" | "fail" | "idle"> => {
     // The LIVE screen is the direct H.264 capture (encoder.ts); this sampler exists ONLY to feed
@@ -462,13 +517,17 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       const fireInMs = Math.max(1000, Math.min(msg.fireInMs, 7 * 24 * 3600_000)); // 1s .. 7 days
       const fireAtMs = Date.now() + fireInMs;
       // Re-adding the same id just updates its deadline; the shared ticker handles the rest.
-      timers.set(msg.id, { id: msg.id, label: msg.label, fireAtMs, action: msg.action });
+      // Pin the action to the display it was aimed at (the controller schedules against what it
+      // is currently viewing).
+      timers.set(msg.id, { id: msg.id, label: msg.label, fireAtMs, action: msg.action, displayId: activeDisplay });
+      persistTimers();
       ensureTimerTicker();
       broadcastTimers();
       log.info(`timer "${msg.label}" in ${Math.round(fireInMs / 1000)}s${msg.action ? ` (+${msg.action.kind})` : ""}`);
     },
     removeTimer(id) {
       if (!timers.delete(id)) return;
+      persistTimers();
       broadcastTimers();
     },
     listTimers() {

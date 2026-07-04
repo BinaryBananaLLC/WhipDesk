@@ -2,13 +2,41 @@
 /**
  * WhipDesk FCM background handler (service worker).
  *
- * Receives Firebase Cloud Messaging web pushes and shows a notification even when the
- * controller PWA is closed. Uses the compat SDK via importScripts (the modular SDK can't run
- * in a classic service worker) and reads the public-safe web config emitted next to this file
- * by scripts/sync-controller.cjs (firebase.json). See apps/mobile-web/src/push.ts.
+ * Shows a notification for every incoming web push even when the controller PWA is closed.
+ *
+ * IMPORTANT: the `push` listener is registered SYNCHRONOUSLY at script evaluation and displays
+ * the notification itself — no Firebase SDK. The previous version initialized the FCM compat SDK
+ * asynchronously (after fetching ./firebase.json), but a push that WAKES a cold service worker
+ * dispatches before any late-registered handler exists, so nothing called showNotification and
+ * Chrome displayed its generic "This site has been updated in the background" fallback instead
+ * of the real alert. Token registration lives page-side (src/push.ts); the worker only needs to
+ * parse the FCM webpush payload ({ notification: { title, body, ... }, data: {...} }) and render
+ * it, which needs no SDK at all.
  */
-importScripts("https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js");
-importScripts("https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js");
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (e) {
+    /* non-JSON push — fall through to the generic title below */
+  }
+  const n = payload.notification || {};
+  const d = payload.data || {};
+  const title = n.title || d.title || "WhipDesk";
+  const body = n.body || d.body || "";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      // App open and visible => its own in-app alerts cover this; skip the OS notification
+      // (same policy the FCM SDK applied).
+      if (wins.some((w) => w.visibilityState === "visible")) return;
+      return self.registration.showNotification(title, {
+        body,
+        tag: n.tag || d.tag || "whipdesk-alert",
+        renotify: true,
+      });
+    }),
+  );
+});
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
@@ -21,23 +49,3 @@ self.addEventListener("notificationclick", (event) => {
     }),
   );
 });
-
-(async () => {
-  try {
-    const res = await fetch("./firebase.json", { cache: "no-store" });
-    if (!res.ok) return;
-    const config = await res.json();
-    firebase.initializeApp(config);
-    const messaging = firebase.messaging();
-    messaging.onBackgroundMessage((payload) => {
-      const n = (payload && payload.notification) || {};
-      self.registration.showNotification(n.title || "WhipDesk", {
-        body: n.body || "",
-        tag: (payload && payload.data && payload.data.tag) || "whipdesk-alert",
-        renotify: true,
-      });
-    });
-  } catch (e) {
-    /* no config / unsupported browser — background push stays disabled */
-  }
-})();
