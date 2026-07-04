@@ -342,7 +342,15 @@ export class InputController {
     }
     if (this.pointers.size < 2) this.twoFinger = null;
 
-    if (!ptr || ptr.consumed) return;
+    if (!ptr || ptr.consumed) {
+      // The LAST finger of a two-finger gesture exits here (it was marked consumed when the first
+      // lifted) — the gesture is fully over, so clear the tap suppression NOW. Leaving it set made
+      // the suppressTap block below eat the NEXT genuine tap: after every pinch-zoom / two-finger
+      // pan the first click on the screen silently did nothing ("I have to tap twice after moving
+      // the screen"). suppressTap must only ever guard lifts belonging to the SAME gesture.
+      if (this.pointers.size === 0) this.suppressTap = false;
+      return;
+    }
     if (this.suppressTap) {
       if (this.pointers.size === 0) this.suppressTap = false;
       return;
