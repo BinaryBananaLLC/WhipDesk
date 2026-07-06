@@ -74,6 +74,9 @@ export class InputController {
     canvas.addEventListener("pointerup", (e) => this.onUp(e));
     canvas.addEventListener("pointercancel", (e) => this.onUp(e));
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Desktop controllers: the mouse wheel zooms the view toward the cursor, mirroring the mobile
+    // pinch. passive:false so we can preventDefault the page/rubber-band scroll the wheel would do.
+    canvas.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     this.view.setCursor(this.cursor.nx, this.cursor.ny);
   }
 
@@ -160,7 +163,7 @@ export class InputController {
     this.conn.send(message);
   }
 
-  private positionOf(e: PointerEvent): { x: number; y: number } {
+  private positionOf(e: MouseEvent): { x: number; y: number } {
     const rect = this.canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
@@ -204,6 +207,23 @@ export class InputController {
         this.moveCursor(n.nx, n.ny);
       }
     }
+  }
+
+  /**
+   * Mouse-wheel zoom (desktop). Zooms around the pointer so the pixel under the cursor stays put —
+   * exactly like a two-finger pinch on mobile. The host re-crop is coalesced by main.ts's viewport
+   * debounce, so a wheel flick zooms instantly on-screen and asks the host to sharpen once it
+   * settles. deltaMode is normalized so a "lines" wheel (Firefox) matches a "pixels" trackpad.
+   */
+  private onWheel(e: WheelEvent): void {
+    e.preventDefault();
+    const p = this.positionOf(e);
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.canvas.clientHeight || 800 : 1;
+    // Clamp a single notch so a chunky mouse wheel can't jump multiple zoom stops at once.
+    const dy = Math.max(-40, Math.min(40, e.deltaY * unit));
+    const factor = Math.exp(-dy * 0.0016); // wheel up (dy<0) => factor>1 => zoom in
+    this.view.zoomAround(factor, p.x, p.y);
+    this.cb.onZoom?.(this.view.getZoom());
   }
 
   private onLongPress(): void {

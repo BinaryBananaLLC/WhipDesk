@@ -1,6 +1,6 @@
 import type { ScreenView } from "./screen";
 import type { Whipository } from "./whipository";
-import { icon } from "./icons";
+import whipositoryMark from "./assets/whipository.png";
 
 export interface PlacementResult {
   /** Normalized [0,1] desktop point the user targeted. */
@@ -58,10 +58,14 @@ export function placeTarget(
       row.className = "wd-place-text-row";
       const whips = document.createElement("button");
       whips.type = "button";
-      whips.className = "wd-btn wd-icon-only wd-place-whips";
+      whips.className = "wd-btn wd-icon-only wd-place-whips wd-whips-btn";
       whips.title = "Whipository — insert a saved prompt";
       whips.setAttribute("aria-label", "Insert a saved prompt");
-      whips.appendChild(icon("book"));
+      const whipsImg = document.createElement("img");
+      whipsImg.src = whipositoryMark;
+      whipsImg.alt = "";
+      whipsImg.decoding = "async";
+      whips.appendChild(whipsImg);
       whips.onclick = () =>
         opts.whipository!.open((text) => {
           textInput!.value = textInput!.value ? `${textInput!.value}${text}` : text;

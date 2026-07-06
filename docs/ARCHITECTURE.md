@@ -30,8 +30,11 @@ math. The renderer derives display scale from the frame's natural size.
 `capture/screen.ts` samples the active display; `capture/displays.ts` enumerates monitors and
 maps cross-monitor geometry (macOS NSScreen Cocoa→Quartz origin flip). Two output paths:
 
-- **LAN / JPEG**: `screenshot-desktop` → JPEG; optional `sharp` downsizes + re-encodes and, on
-  zoom, crops to just the visible region (`set-viewport`) to save bandwidth.
+- **LAN / JPEG**: single-frame sampler — `screenshot-desktop` on macOS/Linux, the bundled ffmpeg
+  (ddagrab/gdigrab, `capture/win-capture.ts`) on Windows so the Windows build ships no
+  `screenshot-desktop` (its csc-compiled win32 helper trips AV/winget validation scans). Optional
+  `sharp` downsizes + re-encodes and, on zoom, crops to just the visible region (`set-viewport`)
+  to save bandwidth. Windows monitors enumerate natively via `capture/displays-win.ts`.
 - **Remote / H.264**: `capture/encoder.ts` (ffmpeg/VideoToolbox → werift track) with a JPEG
   fallback when no usable H.264 encoder exists. A low-res "overview" track feeds the minimap
   when zoomed. The encoder applies the zoom crop as a filter.

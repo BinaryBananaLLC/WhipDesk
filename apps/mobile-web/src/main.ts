@@ -10,6 +10,7 @@ import { RemoteConnection, type FirebaseWebConfig } from "./remote";
 import { ScreenView } from "./screen";
 import { RegionWatchers } from "./watchers";
 import { Whipository } from "./whipository";
+import { dashboardUrl } from "./site";
 import "./styles.css";
 
 interface HashParams {
@@ -404,6 +405,12 @@ async function start(): Promise<void> {
     if (!e.persisted) conn.close();
   });
 
+  // Back-button guard (remote/dashboard sessions only): a single Back used to silently drop the
+  // session and bounce to the dashboard. Trap it with a confirm dialog so a stray swipe/back doesn't
+  // yank you off a live machine — Cancel stays put; Disconnect (or pressing Back a second time)
+  // leaves. LAN has no dashboard to return to, so it's not armed there.
+  if (remote && device) setupBackGuard(conn, app!);
+
   if (!token) {
     controls.flashError("No pairing token in the URL (#t=…). Re-open the link/QR from the agent.");
   }
@@ -416,6 +423,72 @@ function el(tag: string, className: string): HTMLElement {
   const node = document.createElement(tag);
   node.className = className;
   return node;
+}
+
+/**
+ * Intercept the browser Back button with a confirm dialog instead of dropping the session outright.
+ *
+ * Mechanics: we keep one extra "trap" history entry ahead of the page. The first Back pops it and
+ * fires popstate — we show the dialog and immediately push a fresh trap, so a SECOND Back is caught
+ * too. While the dialog is up, that second Back (or the Disconnect button) actually leaves;
+ * Cancel just closes the dialog and we stay put. Everything is one SPA page, so no real navigation
+ * happens until the user confirms.
+ */
+function setupBackGuard(conn: ControllerTransport, app: HTMLElement): void {
+  let dialog: HTMLElement | null = null;
+  let armed = false; // the confirm dialog is showing, waiting for a 2nd Back / a button
+  const trap = () => history.pushState({ wdBackGuard: true }, "");
+
+  const leave = () => {
+    armed = false;
+    conn.close();
+    window.location.replace(dashboardUrl()); // replace so the trap entries don't linger
+  };
+
+  const build = (): HTMLElement => {
+    const overlay = el("div", "wd-dialog-overlay wd-backguard hidden");
+    const card = el("div", "wd-dialog");
+    const head = el("div", "wd-dialog-head");
+    const h2 = document.createElement("h2");
+    h2.textContent = "Disconnect from this machine?";
+    head.appendChild(h2);
+    const help = el("p", "wd-dialog-help");
+    help.textContent = "You'll go back to your dashboard. Press back again to disconnect.";
+    const actions = el("div", "wd-dialog-actions");
+    const cancel = document.createElement("button");
+    cancel.className = "wd-btn";
+    cancel.textContent = "Cancel";
+    cancel.onclick = hide;
+    const disconnect = document.createElement("button");
+    disconnect.className = "wd-btn wd-danger";
+    disconnect.textContent = "Disconnect";
+    disconnect.onclick = leave;
+    actions.append(cancel, disconnect);
+    card.append(head, help, actions);
+    overlay.appendChild(card);
+    overlay.addEventListener("pointerdown", (e) => {
+      if (e.target === overlay) hide();
+    });
+    app.appendChild(overlay);
+    return overlay;
+  };
+
+  const show = () => {
+    if (!dialog) dialog = build();
+    dialog.classList.remove("hidden");
+    armed = true;
+    trap(); // re-arm: keep a trap entry ahead so a second Back re-enters popstate
+  };
+  function hide(): void {
+    dialog?.classList.add("hidden");
+    armed = false;
+  }
+
+  trap(); // initial trap entry
+  window.addEventListener("popstate", () => {
+    if (armed) leave();
+    else show();
+  });
 }
 
 /**

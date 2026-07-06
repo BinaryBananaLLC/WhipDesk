@@ -62,12 +62,17 @@ cpSync(join(distDir, "mobile-web"), join(resourcesDir, "mobile-web"), { recursiv
 
 // 3) Install ONLY the external deps into resources/node_modules for THIS platform (runs the
 //    ffmpeg-static / sharp / nut.js install scripts that fetch per-platform binaries).
+// Windows deliberately DROPS screenshot-desktop: its win32 helper (a csc-compiled screen-capture
+// .exe) trips ESET's MSIL/CaptureScreen.A PUA scan and blocks winget/Store binary validation. On
+// Windows the sampler + display list use the bundled ffmpeg / native probes instead (win-capture.ts,
+// displays-win.ts), so nothing here depends on it.
 const deps = { ...pkg.dependencies, ...pkg.optionalDependencies };
+const bundledExternal = EXTERNAL.filter((n) => !(isWin && n === "screenshot-desktop"));
 const stageManifest = {
   name: "whipdesk-resources",
   private: true,
   version: pkg.version,
-  dependencies: Object.fromEntries(EXTERNAL.map((n) => [n, deps[n] ?? "*"])),
+  dependencies: Object.fromEntries(bundledExternal.map((n) => [n, deps[n] ?? "*"])),
 };
 writeFileSync(join(resourcesDir, "package.json"), JSON.stringify(stageManifest, null, 2));
 run("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--no-package-lock"], { cwd: resourcesDir });

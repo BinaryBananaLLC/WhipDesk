@@ -8,6 +8,7 @@ import type { Whipository } from "./whipository";
 import { icon, type IconName } from "./icons";
 import { DONATE_URL, GITHUB_URL, REDDIT_URL, dashboardUrl } from "./site";
 import whipMark from "./assets/whip.png";
+import whipositoryMark from "./assets/whipository.png";
 
 interface Deps {
   conn: ControllerTransport;
@@ -91,6 +92,21 @@ function iconBtn(name: IconName, label = "", className = "wd-btn"): HTMLButtonEl
   return b;
 }
 
+/** Square, icon-only button using the Whipository mark (raster art, so it's an <img>, not an SVG
+ * from the icon set). Used next to any prompt box that a whip can be inserted into. */
+function whipButton(onClick: () => void): HTMLButtonElement {
+  const b = el("button", "wd-btn wd-icon-only wd-whips-btn");
+  const img = document.createElement("img");
+  img.src = whipositoryMark;
+  img.alt = "";
+  img.decoding = "async";
+  b.appendChild(img);
+  b.title = "Whipository — insert a saved prompt";
+  b.setAttribute("aria-label", "Insert a saved prompt");
+  b.onclick = onClick;
+  return b;
+}
+
 /** An icon + label anchor that opens an external page (Reddit/GitHub) safely in a new tab. */
 function feedbackLink(name: IconName, label: string, href: string): HTMLAnchorElement {
   const a = el("a", "wd-conn-feedback-link");
@@ -161,6 +177,7 @@ export class Controls {
   private readonly tabButtons = new Map<Tab, HTMLButtonElement>();
   private readonly tabPanes = new Map<Tab, HTMLElement>();
   private collapseBtn!: HTMLButtonElement;
+  private fullscreenBtn: HTMLButtonElement | null = null;
   private interactHost!: HTMLElement;
 
   private monitorList!: HTMLElement;
@@ -326,6 +343,14 @@ export class Controls {
     disconnect.append(icon("power"), el("span", "wd-btn-label", "Disconnect"));
     disconnect.onclick = () => this.disconnect();
 
+    // Donate/support: ALWAYS visible in this dialog (it used to appear only on TURN sessions —
+    // relay users are the costly ones, but everyone should be able to find the button).
+    const support = el("div", "wd-conn-support");
+    const donate = el("button", "wd-support-link");
+    donate.append(icon("heart", 14), el("span", undefined, "Support WhipDesk"));
+    donate.onclick = () => window.open(DONATE_URL, "_blank", "noopener");
+    support.appendChild(donate);
+
     // Found a bug or have an idea? This dialog is where engaged users land, so it's a natural place
     // to invite reports and point them at the community/repo. Kept to a single line + two buttons so
     // it stays compact and translates cleanly (no idioms).
@@ -339,7 +364,7 @@ export class Controls {
     feedback.appendChild(links);
 
     // Row order: Status, Connection, Speed, Machine (+HDR note), Viewers.
-    card.append(head, statusRow, routeRow, speedRow, nameRow, this.connHdr, viewersRow, this.connError, disconnect, feedback);
+    card.append(head, statusRow, routeRow, speedRow, nameRow, this.connHdr, viewersRow, this.connError, disconnect, support, feedback);
     overlay.appendChild(card);
     this.root.appendChild(overlay);
     this.connectionOverlay = overlay;
@@ -364,14 +389,8 @@ export class Controls {
       badge.textContent = transportLabel(this.transport);
       badge.dataset.kind = this.transport.toLowerCase();
       this.connRoute.append(badge, el("span", "wd-conn-desc", transportDesc(this.transport)));
-      // Relay (TURN) traffic costs us real money — so right where the description says "Consider
-      // supporting us", drop the donate button into the Connection value field.
-      if (this.transport.toLowerCase() === "turn") {
-        const donate = el("button", "wd-support-link");
-        donate.append(icon("heart", 14), el("span", undefined, "Support WhipDesk"));
-        donate.onclick = () => window.open(DONATE_URL, "_blank", "noopener");
-        this.connRoute.append(donate);
-      }
+      // The donate button lives in the dialog footer (always visible, every transport) — the TURN
+      // description's "Consider supporting us" points at it.
     } else {
       this.connRoute.append(el("span", "wd-conn-desc", this.status === "connected" ? "Detecting route…" : "Connecting…"));
     }
@@ -466,6 +485,19 @@ export class Controls {
     addTab("interact", "mouse", "Interact");
     addTab("type", "keyboard", "Type");
     addTab("monitor", "monitor", "Monitor");
+
+    // Fullscreen toggle — CSS reveals it only on a touch device in landscape, where the browser
+    // chrome eats scarce vertical space (see .wd-fullscreen). Skipped entirely where the Fullscreen
+    // API isn't usable on an element (notably iOS Safari, which only fullscreens <video>), so we
+    // never show a dead button. Sits between Monitor and the collapse chevron.
+    if (this.fullscreenSupported()) {
+      this.fullscreenBtn = iconBtn("fullscreen", "", "wd-collapse wd-fullscreen");
+      this.fullscreenBtn.setAttribute("aria-label", "Toggle fullscreen");
+      this.fullscreenBtn.title = "Fullscreen";
+      this.fullscreenBtn.onclick = () => this.toggleFullscreen();
+      tabs.appendChild(this.fullscreenBtn);
+      document.addEventListener("fullscreenchange", () => this.syncFullscreenBtn());
+    }
 
     this.collapseBtn = iconBtn("chevron-down", "", "wd-collapse");
     this.collapseBtn.onclick = () => this.setCollapsed(!this.collapsed);
@@ -606,34 +638,45 @@ export class Controls {
     this.promptInput.placeholder = "Type to send to the focused app (URL, command, message…)";
     this.promptInput.rows = 2;
 
-    // All buttons wrap together so no single button takes a whole row.
-    const buttons = el("div", "wd-wrap");
+    // The Whipository button lives right next to the box it injects into (on the right), so it's
+    // obvious the saved whip lands in THIS textarea — not straight on the host. Same square-icon
+    // treatment as the scheduled-work prompt entry.
+    const inputRow = el("div", "wd-type-input-row");
+    const whipsBeside = whipButton(() => this.deps.whipository.open((text) => this.insertIntoPrompt(text)));
+    inputRow.append(this.promptInput, whipsBeside);
+
+    // Special keys wrap together so no single key takes a whole row.
+    const keys = el("div", "wd-wrap");
     for (const [label, key] of SPECIAL_KEYS) {
       const b = btn(label);
       b.onclick = () => conn.send({ type: "key", key });
-      buttons.appendChild(b);
+      keys.appendChild(b);
     }
-    // 1x/2x/3x click (same pointer icon family as the Viewer tab, compact labels — three buttons
-    // must share the cramped Type row). 1x is here so a quick focus-click before typing (select a
-    // field, dismiss a popup) never forces a tab switch away from Type.
-    const single = iconBtn("pointer", "1x click");
+
+    // Action row: 1×/2×/3× click + Whips + Insert + Send share ONE nowrap row, so the labels are
+    // deliberately terse (full names live in title/aria). 1× is here so a quick focus-click before
+    // typing (select a field, dismiss a popup) never forces a tab switch away from Type.
+    const actions = el("div", "wd-type-actions");
+    const single = iconBtn("pointer", "1×");
+    single.title = "Click";
+    single.setAttribute("aria-label", "Click");
     single.onclick = () => input.click("left");
-    const dbl = iconBtn("double-click", "2x click");
+    const dbl = iconBtn("double-click", "2×");
+    dbl.title = "Double-click";
+    dbl.setAttribute("aria-label", "Double-click");
     dbl.onclick = () => input.multiClick(2);
-    const triple = iconBtn("double-click", "3x click");
+    const triple = iconBtn("double-click", "3×");
+    triple.title = "Triple-click";
+    triple.setAttribute("aria-label", "Triple-click");
     triple.onclick = () => input.multiClick(3);
     const insert = iconBtn("insert", "Insert");
     insert.onclick = () => this.sendText(false);
     const send = iconBtn("send", "Send", "wd-btn wd-go");
     send.onclick = () => this.sendText(true);
-    // Whipository: saved reusable prompts. Picking one lands in THIS textarea (never straight on
-    // the host), so the user can still tweak before Insert/Send.
-    const whips = iconBtn("book", "Whips");
-    whips.title = "Whipository — insert a saved prompt";
-    whips.onclick = () => this.deps.whipository.open((text) => this.insertIntoPrompt(text));
-    buttons.append(single, dbl, triple, whips, insert, send);
+    // Whipository now lives beside the textarea (inputRow) instead of in this action row.
+    actions.append(single, dbl, triple, insert, send);
 
-    pane.append(this.promptInput, buttons);
+    pane.append(inputRow, keys, actions);
     return pane;
   }
 
@@ -693,6 +736,39 @@ export class Controls {
     // clicks) unless the Pan or drag-to-scroll tool is active.
     this.deps.input.setInteraction(tab === "interact" ? this.interactMode : "viewer");
     if (tab === "type") window.setTimeout(() => this.promptInput.focus(), 50);
+  }
+
+  /** True when the browser can fullscreen an element (excludes iOS Safari, which only does <video>). */
+  private fullscreenSupported(): boolean {
+    const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: unknown };
+    return typeof el.requestFullscreen === "function" || typeof el.webkitRequestFullscreen === "function";
+  }
+
+  private fullscreenElement(): Element | null {
+    const doc = document as Document & { webkitFullscreenElement?: Element };
+    return document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+  }
+
+  private toggleFullscreen(): void {
+    const doc = document as Document & { webkitExitFullscreen?: () => void };
+    const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+    if (this.fullscreenElement()) {
+      if (document.exitFullscreen) void document.exitFullscreen().catch(() => {});
+      else doc.webkitExitFullscreen?.();
+    } else if (el.requestFullscreen) {
+      void el.requestFullscreen().catch(() => {});
+    } else {
+      el.webkitRequestFullscreen?.();
+    }
+    this.syncFullscreenBtn();
+  }
+
+  /** Swap the button glyph between enter/exit as fullscreen state changes. */
+  private syncFullscreenBtn(): void {
+    if (!this.fullscreenBtn) return;
+    const on = !!this.fullscreenElement();
+    this.fullscreenBtn.replaceChildren(icon(on ? "fullscreen-exit" : "fullscreen"));
+    this.fullscreenBtn.title = on ? "Exit fullscreen" : "Fullscreen";
   }
 
   private setCollapsed(collapsed: boolean): void {

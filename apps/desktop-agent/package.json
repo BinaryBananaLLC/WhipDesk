@@ -39,11 +39,11 @@
     "express": "^5.2.1",
     "ffmpeg-static": "^5.3.0",
     "qrcode-terminal": "^0.12.0",
-    "screenshot-desktop": "^1.15.1",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
     "@nut-tree-fork/nut-js": "^4.2.0",
+    "screenshot-desktop": "^1.15.1",
     "sharp": "^0.35.3",
     "werift": "^0.23.0"
   },

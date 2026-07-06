@@ -83,8 +83,9 @@ async function main(): Promise<void> {
       // Off-LAN ICE (STUN-first, ephemeral TURN) is minted by the cloud backend; the agent never
       // holds the relay secret — it just presents its ID token. Falls back to public STUN.
       if (registry) signaling = await startSignaling(ctx, rtdb, identity, () => fetchIceServers(cloud, auth));
-      // Mirror alerts to FCM so they arrive even when the controller PWA is closed.
-      pushPublisher = startPushPublisher(ctx.hub, firestore);
+      // Mirror alerts to FCM so they arrive even when the controller PWA is closed. Pass this
+      // machine's id so the push can deep-link the click back to it on the dashboard.
+      pushPublisher = startPushPublisher(ctx.hub, firestore, identity.deviceId);
     }
   } else {
     log.info("cloud: disabled (LAN-only) for this run.");

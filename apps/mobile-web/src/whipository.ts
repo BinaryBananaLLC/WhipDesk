@@ -1,6 +1,7 @@
 import type { FirebaseWebConfig } from "./remote";
 import type { Notifications } from "./notifications";
 import { icon } from "./icons";
+import whipositoryMark from "./assets/whipository.png";
 
 /**
  * The Whipository — a place where you store and reuse your whips (a whip = a prompt you send
@@ -89,49 +90,88 @@ export class Whipository {
       if (e.target === overlay) this.close();
     });
     const card = el("div", "wd-dialog");
+
+    // Header: brand icon + title on the left; a compact "+" add button and the × close on the right.
+    // The "+" used to be a full-width "Add whip" bar at the bottom — moving it up here reclaims that
+    // whole row for one more whip, and makes clear that adding is a small utility, not the main act.
     const head = el("div", "wd-dialog-head");
-    head.append(el("h2", "", "Whipository"));
+    const titleWrap = el("div", "wd-dialog-title");
+    const mark = document.createElement("img");
+    mark.src = whipositoryMark;
+    mark.alt = "";
+    mark.decoding = "async";
+    mark.className = "wd-dialog-title-icon";
+    titleWrap.append(mark, el("h2", "", "Whipository"));
+    const headActions = el("div", "wd-dialog-head-actions");
+    const add = el("button", "wd-btn wd-icon-only wd-whips-add");
+    add.appendChild(icon("plus"));
+    add.setAttribute("aria-label", "Add whip");
+    add.title = "Add a whip";
+    add.onclick = () => openEditor(null);
     const x = el("button", "wd-dialog-x");
     x.appendChild(icon("x"));
     x.onclick = () => this.close();
-    head.appendChild(x);
+    headActions.append(add, x);
+    head.append(titleWrap, headActions);
 
     const help = el(
       "p",
       "wd-dialog-help",
-      "A place where you store and reuse your whips — a whip is a prompt you send often. Tap one to insert it into the text box you're typing in.",
+      "A place where you store and reuse your whips (AI prompts). Select the one you want to insert into the text box you're typing in.",
     );
 
     const list = el("div", "wd-whips-list");
     const editorHost = el("div", "wd-whips-editor-host");
 
-    const bar = el("div", "wd-dialog-actions");
-    const add = el("button", "wd-btn wd-go");
-    add.append(icon("plus"), el("span", "wd-btn-label", "Add whip"));
-    add.onclick = () => openEditor(null);
-    bar.append(add);
-
-    // Honest one-liner about where the list lives, so sync expectations are set.
+    // Honest one-liner about where the list lives — and, on LAN, a nudge to sign in to sync.
     const where = el(
       "p",
       "wd-whips-where",
-      this.cloud ? "Synced to your WhipDesk account." : "Stored in this browser (LAN mode — no account sync).",
+      this.cloud
+        ? "Synchronized across all your devices."
+        : "In LAN mode whips are stored locally only. Sign in to share across devices.",
     );
+
+    // Inline delete confirmation: replace the row's buttons with Cancel / Delete so a stray tap can't
+    // drop a whip (installed PWAs block window.confirm, so we can't lean on that).
+    const confirmDelete = (row: HTMLElement, w: Whip) => {
+      const restore = [...row.children];
+      row.replaceChildren();
+      const ask = el("span", "wd-whip-confirm", "Delete this whip?");
+      const cancel = el("button", "wd-btn wd-whip-confirm-btn");
+      cancel.append(el("span", "wd-btn-label", "Cancel"));
+      cancel.onclick = () => row.replaceChildren(...restore);
+      const yes = el("button", "wd-btn wd-danger wd-whip-confirm-btn");
+      yes.append(el("span", "wd-btn-label", "Delete"));
+      yes.onclick = () => {
+        this.store.whips = this.store.whips.filter((x) => x.id !== w.id);
+        this.persist();
+        renderList();
+      };
+      row.append(ask, cancel, yes);
+    };
 
     const renderList = () => {
       list.replaceChildren();
       const whips = this.sorted();
       if (whips.length === 0) {
-        list.appendChild(el("p", "wd-dialog-help", "No whips yet — add the prompts you keep retyping."));
+        list.appendChild(el("p", "wd-dialog-help", "No whips yet — tap + to add the prompts you keep retyping."));
         return;
       }
       for (const w of whips) {
         const row = el("div", "wd-whip-row");
+        // Tapping the text opens a full-text preview (some whips start alike — let the user read the
+        // whole thing before choosing). Only the Insert button actually inserts.
         const pick = el("button", "wd-whip-text");
         pick.type = "button";
-        pick.title = "Insert this whip";
+        pick.title = "View full text";
         pick.textContent = w.text;
-        pick.onclick = () => {
+        pick.onclick = () => this.openPreview(w, onInsert);
+        const insert = el("button", "wd-btn wd-icon-only");
+        insert.appendChild(icon("insert"));
+        insert.setAttribute("aria-label", "Insert whip");
+        insert.title = "Insert into the text box";
+        insert.onclick = () => {
           this.bumpUse(w.id);
           this.close();
           onInsert(w.text);
@@ -139,16 +179,14 @@ export class Whipository {
         const edit = el("button", "wd-btn wd-icon-only");
         edit.appendChild(icon("pencil"));
         edit.setAttribute("aria-label", "Edit whip");
+        edit.title = "Edit";
         edit.onclick = () => openEditor(w);
         const del = el("button", "wd-btn wd-icon-only");
         del.appendChild(icon("trash"));
         del.setAttribute("aria-label", "Delete whip");
-        del.onclick = () => {
-          this.store.whips = this.store.whips.filter((x) => x.id !== w.id);
-          this.persist();
-          renderList();
-        };
-        row.append(pick, edit, del);
+        del.title = "Delete";
+        del.onclick = () => confirmDelete(row, w);
+        row.append(pick, insert, edit, del);
         list.appendChild(row);
       }
     };
@@ -159,7 +197,7 @@ export class Whipository {
         return;
       }
       editorHost.replaceChildren();
-      bar.classList.add("hidden");
+      add.classList.add("hidden");
       const ta = el("textarea", "wd-input wd-input-area");
       ta.maxLength = MAX_WHIP_CHARS;
       ta.rows = 3;
@@ -197,15 +235,52 @@ export class Whipository {
     };
     const closeEditor = () => {
       editorHost.replaceChildren();
-      bar.classList.remove("hidden");
+      add.classList.remove("hidden");
     };
 
-    card.append(head, help, list, editorHost, bar, where);
+    card.append(head, help, list, editorHost, where);
     overlay.appendChild(card);
     this.root.appendChild(overlay);
     renderList();
     // If the cloud copy turns out newer, refresh the open list in place.
     this.onCloudRefresh = renderList;
+  }
+
+  /**
+   * Full-text preview of a single whip. Opened by tapping a whip's text so the user can read the
+   * whole prompt (handy when several start the same) before committing. Its own Insert button is
+   * the only path that inserts from here — the list preview never inserts by itself.
+   */
+  private openPreview(w: Whip, onInsert: (text: string) => void): void {
+    const overlay = el("div", "wd-dialog-overlay wd-whips-overlay wd-whip-preview-overlay");
+    overlay.addEventListener("pointerdown", (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    const card = el("div", "wd-dialog");
+    const head = el("div", "wd-dialog-head");
+    head.append(el("h2", "", "Whip"));
+    const x = el("button", "wd-dialog-x");
+    x.appendChild(icon("x"));
+    x.onclick = () => overlay.remove();
+    head.appendChild(x);
+
+    const body = el("div", "wd-whip-preview-text");
+    body.textContent = w.text; // textContent: prompts are user data, never HTML
+
+    const bar = el("div", "wd-dialog-actions");
+    const insert = el("button", "wd-btn wd-go");
+    insert.append(icon("insert"), el("span", "wd-btn-label", "Insert"));
+    insert.onclick = () => {
+      overlay.remove();
+      this.bumpUse(w.id);
+      this.close();
+      onInsert(w.text);
+    };
+    bar.append(insert);
+
+    card.append(head, body, bar);
+    overlay.appendChild(card);
+    this.root.appendChild(overlay);
   }
 
   private onCloudRefresh: (() => void) | null = null;

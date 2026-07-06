@@ -465,6 +465,17 @@ textarea {
   color: var(--text);
   cursor: pointer;
 }
+/* Fullscreen toggle in the ribbon: only worth showing on a touch device held in landscape, where
+   the browser's own chrome eats the little vertical space there is. Hidden on desktop and portrait
+   (this rule follows .wd-collapse so it overrides its display for the shared element). */
+.wd-fullscreen {
+  display: none;
+}
+@media (pointer: coarse) and (orientation: landscape) {
+  .wd-fullscreen {
+    display: grid;
+  }
+}
 
 /* buttons */
 .wd-btn {
@@ -580,12 +591,52 @@ textarea {
   flex-wrap: wrap;
   justify-content: center;
 }
+/* Type action row: 1×/2×/3× + Whips + Insert + Send on ONE line, never wrapping. Buttons split
+   the width evenly and may shrink (min-width:0) — labels are kept terse in controls.ts so all six
+   fit even at ~320px. */
+/* textarea + the square Whipository button beside it (Type tab) */
+.wd-type-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.wd-type-input-row .wd-type-input {
+  flex: 1;
+  min-width: 0;
+}
+.wd-type-input-row .wd-whips-btn {
+  align-self: flex-start;
+}
+/* Whipository icon button: the raster mark fills the square button, matching the SVG icon buttons. */
+.wd-whips-btn img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  display: block;
+}
 .wd-type-actions {
   display: flex;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 4px;
 }
 .wd-type-actions .wd-btn {
   flex: 1;
+  min-width: 0;
+  padding: 6px 4px;
+  gap: 4px;
+  font-size: 12px;
+}
+.wd-type-actions .wd-btn svg {
+  flex-shrink: 0;
+}
+@media (min-width: 390px) {
+  .wd-type-actions {
+    gap: 6px;
+  }
+  .wd-type-actions .wd-btn {
+    padding: 6px 8px;
+    font-size: 13px;
+  }
 }
 
 /* monitor pane */
@@ -616,9 +667,25 @@ textarea {
   padding: 10px 12px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  pointer-events: auto; /* the container is pointer-events:none so the screen stays tappable */
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.wd-toast-glyph {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+}
+.wd-toast-content {
+  display: flex;
   flex-direction: column;
   gap: 2px;
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  min-width: 0;
+  flex: 1;
 }
 .wd-toast strong {
   font-size: 14px;
@@ -626,18 +693,46 @@ textarea {
 .wd-toast span {
   font-size: 13px;
   color: var(--muted);
+  word-break: break-word;
+}
+.wd-toast-close {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 2px;
+  margin: -2px -4px 0 0;
+  cursor: pointer;
+  border-radius: 6px;
+  line-height: 0;
+}
+.wd-toast-close:hover {
+  color: var(--fg, #fff);
+  background: rgba(127, 127, 127, 0.18);
 }
 .wd-toast.wd-success {
   border-left-color: var(--accent-2);
 }
+.wd-toast.wd-success .wd-toast-glyph {
+  color: var(--accent-2);
+}
 .wd-toast.wd-warning {
   border-left-color: var(--warn);
+}
+.wd-toast.wd-warning .wd-toast-glyph {
+  color: var(--warn);
 }
 .wd-toast.wd-error {
   border-left-color: var(--error);
 }
+.wd-toast.wd-error .wd-toast-glyph {
+  color: var(--error);
+}
 .wd-toast.wd-info {
   border-left-color: var(--accent);
+}
+.wd-toast.wd-info .wd-toast-glyph {
+  color: var(--accent);
 }
 .wd-toast.wd-hide {
   opacity: 0;
@@ -1286,6 +1381,16 @@ textarea {
   height: 14px;
   flex: none;
 }
+/* Always-visible support row in the connection dialog, centered above the feedback footer. */
+.wd-conn-support {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+.wd-conn-support .wd-support-link {
+  align-self: center;
+  margin-top: 0;
+}
 /* Feedback footer in the connection dialog — one short line + Reddit / GitHub buttons. */
 .wd-conn-feedback {
   margin-top: 14px;
@@ -1473,6 +1578,72 @@ textarea {
   color: var(--muted);
   font-size: 12px;
   text-align: center;
+}
+/* Dialog header: brand icon + title on the left, small action buttons (＋ / ×) on the right. */
+.wd-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.wd-dialog-title-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  flex: none;
+}
+.wd-dialog-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.wd-whips-add {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px;
+}
+/* Inline "Delete this whip?" confirmation that temporarily replaces a row's buttons. */
+.wd-whip-confirm {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.wd-whip-confirm-btn {
+  min-height: 32px;
+  min-width: auto;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.wd-btn.wd-danger {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+/* Full-text preview overlay sits above the whips list (z 45). */
+.wd-whip-preview-overlay {
+  z-index: 46;
+}
+/* Back-button confirm sits above every other dialog — it's a top-level "leave this session?". */
+.wd-backguard {
+  z-index: 60;
+}
+.wd-whip-preview-text {
+  margin: 10px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 45vh;
+  overflow-y: auto;
 }
 .wd-place-buttons {
   display: flex;
