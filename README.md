@@ -4,6 +4,8 @@
 
 [![CI](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/BinaryBananaLLC/WhipDesk)](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest)
+[![GitHub downloads](https://img.shields.io/github/downloads/BinaryBananaLLC/WhipDesk/total)](https://github.com/BinaryBananaLLC/WhipDesk/releases)
+[![npm](https://img.shields.io/npm/dm/whipdesk)](https://www.npmjs.com/package/whipdesk)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/BinaryBananaLLC/WhipDesk/badge)](https://scorecard.dev/viewer/?uri=github.com/BinaryBananaLLC/WhipDesk)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
@@ -69,8 +71,23 @@ npm run notify -- "Build done" "tsc finished with 0 errors"
 ## Install a prebuilt agent
 
 You don't have to build from source. Every [release](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest)
-ships two ways to run the agent — both built by GitHub Actions straight from the tagged source,
-with [verifiable build provenance](docs/VERIFYING-DOWNLOADS.md):
+is built by GitHub Actions straight from the tagged source, with
+[verifiable build provenance](docs/VERIFYING-DOWNLOADS.md).
+
+**One-liners** ([install.sh](scripts/install/install.sh) / [install.ps1](scripts/install/install.ps1) —
+they download the signed release for your OS, verify its SHA-256, and install it):
+
+macOS / Linux:
+
+```bash
+curl -fsSL https://whipdesk.com/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+powershell -c "irm https://whipdesk.com/install.ps1 | iex"
+```
 
 **Homebrew (macOS).**
 
@@ -84,7 +101,8 @@ whipdesk
 | OS | Asset | Notes |
 | --- | --- | --- |
 | macOS | `whipdesk-<ver>-macos-arm64.pkg` / `-x64.pkg` | Signed with a Developer ID & **notarized** — installs `whipdesk` to your PATH. |
-| Windows | `whipdesk-<ver>-windows-x64.zip` | Unzip and run `whipdesk.exe`. SmartScreen: **More info → Run anyway** (see verification below). |
+| Windows | `whipdesk-<ver>-windows-x64-setup.exe` | Signed setup wizard — installs per-user, no admin needed. |
+| Windows | `whipdesk-<ver>-windows-x64.zip` | Portable: unzip and run `whipdesk.exe` (also available via `winget install BinaryBanana.WhipDesk` or Scoop). |
 | Linux | `whipdesk-<ver>-linux-x64.tar.gz` | Extract and run `./whipdesk` (needs X11). |
 
 **npm (if you already have Node ≥ 20):**
@@ -158,8 +176,9 @@ video tracks, all DTLS-encrypted — with two ways to broker the handshake:
 
 - **LAN** — the agent's own WebSocket swaps the SDP offer/answer; the media flows host-to-host
   on your network, touching nothing else.
-- **Remote** — Firebase Realtime Database swaps the SDP; STUN connects directly, with
-  ephemeral-credential TURN as a last-resort relay.
+- **Remote** — a WebSocket to the WhipDesk edge (Cloudflare) swaps the SDP; STUN connects
+  directly, with ephemeral-credential TURN as a last-resort relay. The same socket is what makes
+  the machine show "online" on the dashboard — no polling, no heartbeats.
 
 Every session goes through the same gate: pairing token → PIN challenge → only then does the
 screen start. Pointer coordinates travel normalized to `[0,1]`, so control is resolution- and
@@ -170,16 +189,18 @@ Retina-independent. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the des
 LAN needs nothing. Remote access and the device dashboard run on the **hosted WhipDesk.com
 backend, which is baked into this repo** (`apps/desktop-agent/src/cloud/config.ts`) — so it just
 works out of the box. On startup the agent asks whether to enable secure cloud discovery; answer
-**No** to stay strictly LAN-only, and nothing ever touches Firebase.
+**No** to stay strictly LAN-only, and nothing ever leaves your network.
 
-Those baked-in values are a Firebase **web** config — public by design, the same ones whipdesk.com
-serves in its browser bundle. They are **not** secrets: there's no service-account key, cloud is
-opt-in, and every read/write is locked to your own account by the Firestore/RTDB rules. The agent
-signs in as the real user via passwordless email-link — the same account as the website.
+The cloud seam is small: Firebase Auth signs you in (passwordless email-link, same account as
+the website) and the **WhipDesk edge** (a Cloudflare Worker) carries presence + the WebRTC
+handshake over one authenticated WebSocket per machine. The baked-in values are a Firebase
+**web** config — public by design, the same ones whipdesk.com serves in its browser bundle. They
+are **not** secrets: there's no service-account key, cloud is opt-in, and every message is
+locked to your own account by your verified sign-in.
 
-**Prefer your own backend?** Point the agent at your own Firebase project + TURN by dropping a web
-config in `.whipdesk/firebase.json` (gitignored) — that file is the only override, and it
-replaces the baked-in default.
+**Prefer your own backend?** Point the agent at your own Firebase project + edge service by
+dropping a web config (plus an `edgeUrl`) in `.whipdesk/firebase.json` (gitignored) — that file
+is the only override, and it replaces the baked-in default.
 
 ## Project layout
 
@@ -207,8 +228,33 @@ npm run test         # node --test (auth handshake, pin, monitor states, crypto,
 Found a vulnerability? Please open a [security advisory](https://github.com/BinaryBananaLLC/WhipDesk/security/advisories/new)
 rather than a public issue. Good-faith security research is welcome.
 
+### Privacy & telemetry
+
+WhipDesk contains **no analytics and no tracking**. The only network call the agent makes on its
+own is a daily **update check** to `https://whipdesk.com/api/version` ([source](https://github.com/BinaryBananaLLC/WhipDesk/blob/main/apps/desktop-agent/src/util/update-check.ts)),
+which carries exactly two things: the agent version (in the User-Agent) and the OS platform
+(`darwin`/`win32`/`linux`). No user id, no machine id, no IP retention — the server keeps only
+aggregate counts per version/platform/country so we know which releases are still out there.
+Packaged agents only; source checkouts never phone home.
+
+Disable it entirely with `.whipdesk/settings.json`:
+
+```json
+{ "updateCheck": false }
+```
+
 ## License
 
 [GNU AGPL-3.0](LICENSE). You're free to run, study, modify, and share WhipDesk. If you offer a
 modified version as a network service, the AGPL requires you to publish your source under the
 same license. For commercial licensing, contact BinaryBanana LLC.
+
+## Star History
+
+<a href="https://star-history.com/#BinaryBananaLLC/WhipDesk&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=BinaryBananaLLC/WhipDesk&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=BinaryBananaLLC/WhipDesk&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=BinaryBananaLLC/WhipDesk&type=Date" />
+ </picture>
+</a>

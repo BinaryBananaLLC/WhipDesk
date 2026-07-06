@@ -4,11 +4,11 @@ import { AGENT_VERSION } from "./config";
 import { loadCloudConfig, loadDeviceIdentity } from "./cloud/config";
 import { clearPersistedAuth, ensureAgentAuth, getPersistedAuthSummary } from "./cloud/auth";
 import { createFirestoreRest } from "./cloud/firestore-rest";
-import { createRtdbRest } from "./cloud/rtdb-rest";
+import { EdgeClient } from "./cloud/edge";
 import { startDeviceRegistry, type RegistryHandle } from "./cloud/registry";
 import { startPushPublisher, type PushPublisherHandle } from "./cloud/push-publisher";
 import { fetchIceServers } from "./cloud/ice";
-import { startSignaling, type SignalingHandle } from "./signaling/rtdb";
+import { startSignaling, type SignalingHandle } from "./signaling/edge";
 import { log } from "./logger";
 import { getLanIp, printBanner, printConnectInfo, printSetupReminder } from "./net";
 import { startAgent } from "./server";
@@ -50,6 +50,7 @@ async function main(): Promise<void> {
   //
   // Auth is the REAL user via passwordless email-link (NO anonymous auth): the agent and the
   // website sign in as the same person, so every Firestore read/write is request.auth-gated.
+  let edge: EdgeClient | null = null;
   let registry: RegistryHandle | null = null;
   let signaling: SignalingHandle | null = null;
   let pushPublisher: PushPublisherHandle | null = null;
@@ -68,23 +69,29 @@ async function main(): Promise<void> {
     }
     const auth = await ensureAgentAuth(cloud, config.stateDir, ask);
     if (auth) {
-      // Presence + signaling run on RTDB (streamed pushes, $0 idle); the FCM push relay stays on
+      // Presence + signaling ride ONE WebSocket to the WhipDesk edge (Cloudflare) — online is
+      // simply "this socket is up", offers arrive as messages. The FCM push relay stays on
       // Firestore (rare event-driven writes that trigger the Cloud Function).
-      const rtdb = createRtdbRest(cloud, auth);
-      const firestore = createFirestoreRest(cloud, auth);
-      registry = await startDeviceRegistry({
-        rtdb,
-        identity,
-        name: hostname(),
-        platform: platform(),
-        version: AGENT_VERSION,
-        getLan: () => ({ ip: getLanIp(), port: config.port, token: config.token }),
+      const getLan = () => ({ ip: getLanIp(), port: config.port, token: config.token });
+      edge = new EdgeClient({
+        url: cloud.edgeUrl ?? "https://edge.whipdesk.com",
+        auth,
+        device: () => ({
+          id: identity.deviceId,
+          name: hostname(),
+          platform: platform(),
+          version: AGENT_VERSION,
+          lan: getLan(),
+        }),
       });
-      // Off-LAN ICE (STUN-first, ephemeral TURN) is minted by the cloud backend; the agent never
-      // holds the relay secret — it just presents its ID token. Falls back to public STUN.
-      if (registry) signaling = await startSignaling(ctx, rtdb, identity, () => fetchIceServers(cloud, auth));
+      // Off-LAN ICE (STUN-first, ephemeral TURN) is minted by the edge; the agent never holds
+      // the relay secret — it just presents its ID token. Falls back to our own STUN.
+      signaling = startSignaling(ctx, edge, () => fetchIceServers(cloud, auth, edge ?? undefined));
+      registry = startDeviceRegistry({ edge, getLan });
+      edge.start();
       // Mirror alerts to FCM so they arrive even when the controller PWA is closed. Pass this
       // machine's id so the push can deep-link the click back to it on the dashboard.
+      const firestore = createFirestoreRest(cloud, auth);
       pushPublisher = startPushPublisher(ctx.hub, firestore, identity.deviceId);
     }
   } else {
@@ -96,7 +103,8 @@ async function main(): Promise<void> {
     keepAwake.stop();
     pushPublisher?.stop();
     signaling?.stop();
-    if (registry) await registry.stop().catch(() => undefined);
+    registry?.stop();
+    edge?.stop(); // clean close -> the hub flips the dashboard card to offline immediately
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());

@@ -26,7 +26,7 @@ import { SessionMonitor } from "./monitor/monitor";
 import { loadAlwaysAgents, saveAlwaysAgents } from "./monitor/always-store";
 import { loadTimers, saveTimers, type StoredTimer } from "./timer-store";
 import { isPackaged } from "./util/paths";
-import { announceUpdate, checkForUpdate } from "./util/update-check";
+import { startUpdateChecks } from "./util/update-check";
 import { log } from "./logger";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -671,11 +671,10 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   await new Promise<void>((resolve) => server.listen(config.port, resolve));
   presence.start();
   if (config.keepAwake) keepAwake.start();
-  // Packaged agents get a one-shot "update available" notice (source checkouts update via git).
+  // Packaged agents check for updates at startup + daily (source checkouts update via git).
+  // Anonymous and documented in README "Privacy & telemetry"; opt out via .whipdesk/settings.json.
   if (isPackaged()) {
-    void checkForUpdate(AGENT_VERSION).then((latest) => {
-      if (latest) announceUpdate(latest, AGENT_VERSION, (n) => hub.emit(n));
-    });
+    startUpdateChecks(AGENT_VERSION, config.stateDir, (n) => hub.emit(n));
   }
   log.info(`listening on :${config.port} (capture: ${capturer.backend}, input: ${input.name})`);
   log.info(pin.isSet ? "connection PIN: required" : "connection PIN: NONE (set one in a terminal)");

@@ -4,7 +4,7 @@ import type { AgentAuth } from "./auth";
 
 /**
  * Minimal Firestore REST client authenticated as the REAL signed-in user (idToken from
- * cloud/auth.ts). Device presence + WebRTC signaling moved to RTDB (see cloud/rtdb-rest.ts);
+ * cloud/auth.ts). Device presence + WebRTC signaling live on the edge hub (see cloud/edge.ts);
  * Firestore now backs ONLY the FCM push relay — the agent appends an alert to
  * users/{uid}/pushQueue and a Cloud Function delivers it via web push. These writes are rare
  * (they fire on real alerts, not on a timer), so Firestore's per-op pricing is a non-issue here.

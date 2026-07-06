@@ -52,7 +52,7 @@ class RtpRestamper {
 /**
  * Phase 2 — WebRTC P2P answerer. Establishes a DTLS-encrypted DataChannel directly with a
  * remote controller for off-LAN control. No relay: once connected, frames + input flow
- * peer-to-peer. Firebase is used only for the SDP handshake (see ../signaling/rtdb.ts);
+ * peer-to-peer. The edge hub is used only for the SDP handshake (see ../signaling/edge.ts);
  * STUN-first with ephemeral-credential TURN as the fallback for NAT-blocked peers.
  *
  * Uses `werift` (pure-TS WebRTC) so it runs on bleeding-edge Node with no native build.
@@ -73,7 +73,7 @@ export interface WebRtcAnswer {
   close: () => void;
 }
 
-/** An ICE server entry (STUN, or TURN with ephemeral credentials — see signaling/rtdb.ts). */
+/** An ICE server entry (STUN, or TURN with ephemeral credentials — see signaling/edge.ts). */
 export interface IceServer {
   urls: string | string[];
   username?: string;

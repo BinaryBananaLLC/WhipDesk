@@ -227,6 +227,49 @@ jobs:
           Copy-Item -Recurse -Force "apps/desktop-agent/dist/stage/*" dist-pkg/whipdesk
           Compress-Archive -Path dist-pkg/whipdesk -DestinationPath "dist-out/whipdesk-${{ needs.resolve.outputs.version }}-windows-x64.zip" -Force
 
+      # --- Windows Setup wizard (Inno Setup): wraps the (already SignPath-signed) exe into a
+      # per-user installer, then the installer itself goes through SignPath as a second artifact.
+      # Runs AFTER "Replace exe with the signed one" so the wizard always ships the signed binary.
+      - name: Build Windows installer (Inno Setup)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc `
+            /DAppVersion=${{ needs.resolve.outputs.version }} `
+            /DStageDir="$env:GITHUB_WORKSPACE\apps\desktop-agent\dist\stage" `
+            /DOutDir="$env:GITHUB_WORKSPACE\dist-out" `
+            /DOutBase="whipdesk-${{ needs.resolve.outputs.version }}-windows-x64-setup" `
+            scripts\install\windows-setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload unsigned installer for signing
+        if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
+        id: unsignedsetup
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-setup-unsigned
+          path: dist-out/whipdesk-${{ needs.resolve.outputs.version }}-windows-x64-setup.exe
+          if-no-files-found: error
+
+      - name: Submit SignPath signing request (installer)
+        if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
+        uses: signpath/github-action-submit-signing-request@4f13d373e8f0cd8d3c0465ff4877feff27aed2ae # v1.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORG_ID }}
+          project-slug: whipdesk
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsignedsetup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-setup
+
+      - name: Replace installer with the signed one
+        if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
+        shell: pwsh
+        run: Copy-Item -Force "signed-setup/whipdesk-${{ needs.resolve.outputs.version }}-windows-x64-setup.exe" "dist-out/whipdesk-${{ needs.resolve.outputs.version }}-windows-x64-setup.exe"
+
       # --- Linux: tar.gz (x64 + arm64 legs share this step) ---
       - name: Package Linux (.tar.gz)
         if: startsWith(matrix.os, 'ubuntu')

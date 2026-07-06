@@ -19,9 +19,10 @@ export interface CloudConfig {
   authDomain: string;
   projectId: string;
   appId: string;
-  databaseURL?: string;
   storageBucket?: string;
   messagingSenderId?: string;
+  /** WhipDesk edge (Cloudflare Worker) — presence, signaling, and ICE minting. */
+  edgeUrl?: string;
 }
 
 /**
@@ -45,8 +46,8 @@ export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   authDomain: "whipdesk.firebaseapp.com",
   projectId: "whipdesk",
   appId: "1:55602305407:web:4fad59e539c44d6a5d224a",
-  databaseURL: "https://whipdesk-default-rtdb.firebaseio.com",
   messagingSenderId: "55602305407",
+  edgeUrl: "https://edge.whipdesk.com",
 };
 
 function fromFile(stateDir: string): CloudConfig | null {
@@ -75,7 +76,27 @@ function fromFile(stateDir: string): CloudConfig | null {
  * the opt-in prompt (see index.ts).
  */
 export function loadCloudConfig(stateDir: string): CloudConfig {
-  return fromFile(stateDir) ?? DEFAULT_CLOUD_CONFIG;
+  const cfg = fromFile(stateDir) ?? DEFAULT_CLOUD_CONFIG;
+  return { ...cfg, edgeUrl: cfg.edgeUrl ?? DEFAULT_CLOUD_CONFIG.edgeUrl };
+}
+
+/**
+ * Optional local agent settings — `.whipdesk/settings.json` (gitignored). The ONLY override
+ * surface besides firebase.json, per the no-env-vars/no-CLI-params rule. Currently:
+ *   { "updateCheck": false }   — disable the daily version check against whipdesk.com/api/version
+ */
+export interface AgentSettings {
+  updateCheck?: boolean;
+}
+
+export function loadAgentSettings(stateDir: string): AgentSettings {
+  try {
+    const path = join(stateDir, "settings.json");
+    if (!existsSync(path)) return {};
+    return JSON.parse(readFileSync(path, "utf8")) as AgentSettings;
+  } catch {
+    return {};
+  }
 }
 
 /** A stable identity for this machine, persisted under `.whipdesk/` (gitignored). */

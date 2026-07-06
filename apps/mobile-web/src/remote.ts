@@ -7,14 +7,18 @@ export interface FirebaseWebConfig {
   authDomain: string;
   projectId: string;
   appId: string;
-  databaseURL?: string;
   storageBucket?: string;
   messagingSenderId?: string;
   /** Web Push (VAPID) public key — enables FCM background push when set (Firebase console). */
   vapidKey?: string;
-  /** Override the ICE-servers endpoint; defaults to the project's Cloud Function URL. */
+  /** WhipDesk edge (Cloudflare Worker) — WebRTC signaling + ICE minting. */
+  edgeUrl?: string;
+  /** Override the ICE-servers endpoint; defaults to `${edgeUrl}/v1/ice`. */
   iceUrl?: string;
 }
+
+const DEFAULT_EDGE_URL = "https://edge.whipdesk.com";
+const EDGE_WS_PROTOCOL = "whipdesk.v1";
 
 // Our own STUN as the only fallback (no public/free STUN). The backend normally supplies the
 // full STUN+TURN list via fetchIceServers; this is used only if that fetch fails.
@@ -48,12 +52,13 @@ async function detectTransport(pc: RTCPeerConnection): Promise<"TURN" | "STUN" |
 }
 
 /**
- * Remote transport: a WebRTC DataChannel to the agent, brokered by Firestore signaling.
- * Mirrors `Connection`'s surface (on/send/submitPin/setVisible/connect/close) by wrapping
- * the same `ControllerCore`, so the rest of the app doesn't care which transport is active.
+ * Remote transport: a WebRTC DataChannel to the agent, brokered by the WhipDesk edge hub — a
+ * short-lived WebSocket to the user's own Durable Object relays the SDP offer/answer + trickled
+ * ICE candidates to the agent's always-open hub socket. Mirrors `Connection`'s surface
+ * (on/send/submitPin/setVisible/connect/close) by wrapping the same `ControllerCore`, so the
+ * rest of the app doesn't care which transport is active.
  *
- * The data path is pure P2P + DTLS-encrypted; Firestore only carries the SDP offer/answer.
- * Frames arrive chunked ([1-byte continuation flag][payload]) and are reassembled here.
+ * The data path is pure P2P + DTLS-encrypted; the edge only carries the handshake.
  */
 export class RemoteConnection {
   private readonly core: ControllerCore;
@@ -61,14 +66,9 @@ export class RemoteConnection {
   private dc: RTCDataChannel | null = null;
   private mainXcv: RTCRtpTransceiver | null = null;
   private overviewXcv: RTCRtpTransceiver | null = null;
-  private cleanupSignal: (() => void) | null = null;
-  // Deletes this session's signaling node on teardown / tab death. Trickle keeps the node alive
-  // through the session; the agent TTL-sweeps it too.
-  private deleteSessionDoc: (() => void) | null = null;
-  // Trickle: publish our local ICE candidates as they arrive.
-  private pushCandidate: ((cand: RTCIceCandidateInit) => void) | null = null;
+  // The signaling socket for the CURRENT attempt (closed once the P2P link is up or torn down).
+  private signalWs: WebSocket | null = null;
   private appliedAnswer = false;
-  private readonly appliedCandidates = new Set<string>();
   private closed = false;
   private reconnectTimer = 0;
   // getStats-driven link quality (fps + rtt) for the connection dialog.
@@ -143,17 +143,21 @@ export class RemoteConnection {
     });
   }
 
-  /** Tear down the current peer connection + signaling listener without ending reconnects. */
+  /** Tear down the current peer connection + signaling socket without ending reconnects. */
   private teardown(): void {
     window.clearInterval(this.statsTimer);
     this.statsTimer = 0;
-    this.cleanupSignal?.();
-    this.cleanupSignal = null;
-    this.deleteSessionDoc?.();
-    this.deleteSessionDoc = null;
-    this.pushCandidate = null;
+    if (this.signalWs) {
+      const ws = this.signalWs;
+      this.signalWs = null;
+      ws.onopen = ws.onclose = ws.onmessage = ws.onerror = null;
+      try {
+        ws.close(1000);
+      } catch {
+        /* ignore */
+      }
+    }
     this.appliedAnswer = false;
-    this.appliedCandidates.clear();
     this.core.emit("videoTrack", null);
     this.core.emit("overviewTrack", null);
     if (this.dc) {
@@ -197,9 +201,6 @@ export class RemoteConnection {
     // Firebase is loaded only for remote mode, so the LAN bundle stays lean.
     const { initializeApp, getApps } = await import("firebase/app");
     const { getAuth } = await import("firebase/auth");
-    const { getDatabase, ref, child, push, set, onValue, remove, onDisconnect } = await import(
-      "firebase/database"
-    );
 
     // Use the DEFAULT app + the user's EXISTING signed-in session (no anonymous auth). The
     // dashboard at whipdesk.com signed the real user in; this same-origin page shares that session.
@@ -217,7 +218,6 @@ export class RemoteConnection {
       return;
     }
     const uid = auth.currentUser.uid;
-    const db = getDatabase(app);
 
     // ONE attempt with the full STUN+TURN list. ICE prefers host > srflx > relay, so a same-LAN or
     // STUN pair wins on its own and TURN is used only as a genuine last resort — no probe, no
@@ -276,52 +276,89 @@ export class RemoteConnection {
       }
     };
 
-    // Trickle ICE: publish the offer immediately (no gather wait) and stream candidates BOTH ways
-    // through the session node, so the connection forms as candidates arrive.
-    const sessionRef = push(ref(db, `signaling/${uid}/${this.deviceId}`));
-    this.pushCandidate = (cand) => {
-      try {
-        void set(push(child(sessionRef, "offerCandidates")), cand);
-      } catch {
-        /* best-effort */
+    // Trickle ICE over the edge hub: publish the offer immediately (no gather wait) and stream
+    // candidates BOTH ways as WS messages, so the connection forms as candidates arrive. The hub
+    // relays with ordered exactly-once delivery — no candidate keys, no de-dupe.
+    const sid = crypto.randomUUID();
+    const queuedCands: RTCIceCandidateInit[] = [];
+    let connectSent = false;
+    const sendSignal = (msg: Record<string, unknown>) => {
+      if (this.signalWs?.readyState === WebSocket.OPEN) {
+        try {
+          this.signalWs.send(JSON.stringify({ v: 1, ...msg }));
+          return true;
+        } catch {
+          /* fall through */
+        }
       }
+      return false;
     };
     pc.onicecandidate = (ev) => {
-      if (ev.candidate) this.pushCandidate?.(ev.candidate.toJSON());
+      if (!ev.candidate) return;
+      const cand = ev.candidate.toJSON();
+      if (!connectSent || !sendSignal({ t: "cand", sid, cand })) queuedCands.push(cand);
     };
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await set(sessionRef, {
-      offer: { sdp: pc.localDescription?.sdp ?? "" },
-      controllerUid: uid,
-      createdAtMs: Date.now(),
-    });
-    // Auto-remove our offer if this tab dies; the agent also TTL-sweeps it.
-    void onDisconnect(sessionRef).remove();
-    this.deleteSessionDoc = () => void remove(sessionRef).catch(() => {});
 
-    this.cleanupSignal = onValue(sessionRef, (snap) => {
-      const val = snap.val() as
-        | { answer?: { sdp?: string }; answerCandidates?: Record<string, RTCIceCandidateInit> }
-        | null;
-      if (!val || this.closed) return;
-      if (val.answer?.sdp && !this.appliedAnswer) {
-        this.appliedAnswer = true;
-        void pc.setRemoteDescription({ type: "answer", sdp: val.answer.sdp });
-      }
-      if (val.answerCandidates && this.appliedAnswer) {
-        for (const [k, cand] of Object.entries(val.answerCandidates)) {
-          if (this.appliedCandidates.has(k)) continue;
-          this.appliedCandidates.add(k);
-          try {
-            void pc.addIceCandidate(cand);
-          } catch {
-            /* late/invalid candidate */
-          }
+    const edgeUrl = (this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "");
+    const wsUrl = `${edgeUrl.replace(/^http/, "ws")}/v1/connect?role=client`;
+    const token = await auth.currentUser.getIdToken();
+    // Browsers can't set WS headers — the ID token rides the subprotocol list.
+    const ws = new WebSocket(wsUrl, [EDGE_WS_PROTOCOL, `auth.${token}`]);
+    this.signalWs = ws;
+    // Kept open for the life of the P2P session: a dying tab closes it, which tells the hub (and
+    // the agent) to drop the signaling state — the replacement for RTDB's onDisconnect cleanup.
+    ws.onopen = () => {
+      if (this.closed || this.signalWs !== ws) return;
+      sendSignal({ t: "connect", sid, device: this.deviceId, sdp: pc.localDescription?.sdp ?? "" });
+      connectSent = true;
+      while (queuedCands.length > 0) {
+        const cand = queuedCands.shift()!;
+        if (!sendSignal({ t: "cand", sid, cand })) {
+          queuedCands.unshift(cand);
+          break;
         }
       }
-    });
+    };
+    ws.onmessage = (ev) => {
+      if (this.closed || this.signalWs !== ws) return;
+      let msg: { v?: number; t?: string; sid?: string; sdp?: string; cand?: RTCIceCandidateInit; code?: string };
+      try {
+        msg = JSON.parse(String(ev.data)) as typeof msg;
+      } catch {
+        return;
+      }
+      if (msg.v !== 1) return;
+      if (msg.t === "answer" && msg.sid === sid && msg.sdp && !this.appliedAnswer) {
+        this.appliedAnswer = true;
+        void pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+      } else if (msg.t === "cand" && msg.sid === sid && msg.cand && this.appliedAnswer) {
+        try {
+          void pc.addIceCandidate(msg.cand);
+        } catch {
+          /* late/invalid candidate */
+        }
+      } else if ((msg.t === "error" || msg.t === "end") && (!msg.sid || msg.sid === sid)) {
+        // device-offline / timeout / agent bailed — surface it and retry like any drop.
+        if (!this.appliedAnswer) {
+          this.core.emit("error", msg.t === "error" ? `Remote connect failed: ${msg.code ?? "error"}` : "Remote connect failed");
+          this.core.emit("status", "disconnected");
+          this.scheduleReconnect();
+        }
+      }
+    };
+    ws.onclose = () => {
+      if (this.closed || this.signalWs !== ws) return;
+      this.signalWs = null;
+      // Socket died mid-handshake (edge hiccup, token expiry): retry. After the P2P link is up
+      // the peer connection owns the session and a signaling drop is irrelevant.
+      if (!this.appliedAnswer) {
+        this.core.emit("status", "disconnected");
+        this.scheduleReconnect();
+      }
+    };
   }
 
   /** Poll getStats once a second for fps + round-trip, surfaced in the connection dialog. */
@@ -386,8 +423,8 @@ export class RemoteConnection {
     };
   }
 
-  /** Fetch STUN-first + ephemeral TURN servers from the backend (auth-gated). Cached in
-   * sessionStorage so reconnects don't pay the Cloud Function (cold-start) cost. Falls back to STUN. */
+  /** Fetch STUN-first + ephemeral TURN servers from the edge (auth-gated, load-balanced).
+   * Cached in sessionStorage so reconnects skip the round trip. Falls back to our own STUN. */
   private async fetchIceServers(user: { getIdToken(): Promise<string> }): Promise<RTCIceServer[]> {
     const fallback: RTCIceServer[] = [...STUN];
     try {
@@ -400,8 +437,7 @@ export class RemoteConnection {
       /* ignore */
     }
     try {
-      const url =
-        this.config.iceUrl || `https://us-central1-${this.config.projectId}.cloudfunctions.net/iceServers`;
+      const url = this.config.iceUrl || `${(this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "")}/v1/ice`;
       const token = await user.getIdToken();
       const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
       if (res.ok) {

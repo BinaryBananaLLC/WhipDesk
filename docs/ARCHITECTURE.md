@@ -12,8 +12,10 @@ screen frames (host→controller). Two impls emit identical events so nothing ou
 - **WebSocket** (`transport/websocket.ts`) — LAN. Binary `ws` frames = JPEG; text = JSON.
 - **WebRTC** (`transport/webrtc.ts`) — remote. werift (pure-TS, no native build), one
   DataChannel for control + an H.264 video track for the screen; DTLS encrypts everything.
-  Signaling (`signaling/rtdb.ts`) uses Firebase only to swap one SDP offer/answer; the media
-  path is then pure P2P. STUN-first, ephemeral-credential TURN as fallback (`cloud/ice.ts`).
+  Signaling (`signaling/edge.ts`) swaps one SDP offer/answer over the agent's WebSocket to the
+  WhipDesk edge (`cloud/edge.ts` — the same always-open socket that IS the machine's "online"
+  presence); the media path is then pure P2P. STUN-first, ephemeral-credential TURN as fallback
+  (`cloud/ice.ts`).
 
 Both run through one shared controller `session` (`transport/session.ts`): token gate → PIN
 challenge → only then is the controller authorized and the screen starts.

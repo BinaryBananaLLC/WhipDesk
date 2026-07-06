@@ -28,7 +28,9 @@ Either way, [`.github/workflows/release.yml`](../.github/workflows/release.yml) 
 - stamps the tag into `apps/desktop-agent/package.json` → `src/version.ts` (single source of truth),
 - builds the SEA per OS/arch (macOS arm64 + x64, Windows x64, Linux x64 + arm64),
 - signs + notarizes + staples the macOS `.pkg`; authenticode-signs the Windows exe via SignPath
-  (when configured), zips Windows, tars Linux,
+  (when configured), zips Windows, builds the Inno Setup wizard
+  (`whipdesk-<ver>-windows-x64-setup.exe`, from `scripts/install/windows-setup.iss`, itself
+  SignPath-signed as a second artifact), tars Linux,
 - writes `SHA256SUMS.txt` and generates SLSA build-provenance attestations,
 - **creates the GitHub Release as a draft, attaches every asset, then publishes it** (see below),
   with auto-generated release notes,

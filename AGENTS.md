@@ -49,7 +49,7 @@ Treat the transport as an interface, never branch on its type outside `transport
 | Notification source (watcher) | `apps/desktop-agent/src/watchers/*` |
 | Cloud device registry / auth | `apps/desktop-agent/src/cloud/*` |
 | WebSocket server | `apps/desktop-agent/src/transport/websocket.ts` |
-| WebRTC P2P | `apps/desktop-agent/src/transport/webrtc.ts`, `.../signaling/rtdb.ts`, `apps/mobile-web/src/remote.ts` |
+| WebRTC P2P | `apps/desktop-agent/src/transport/webrtc.ts`, `.../signaling/edge.ts`, `apps/mobile-web/src/remote.ts` |
 | Shared controller session (both transports) | `apps/desktop-agent/src/transport/session.ts` |
 | Mobile rendering / view modes | `apps/mobile-web/src/screen.ts` |
 | Mobile gestures / input | `apps/mobile-web/src/input.ts` |
