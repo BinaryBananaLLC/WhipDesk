@@ -47,6 +47,7 @@ const CLOUD_USE_DEBOUNCE_MS = 10_000;
 const SEED_WHIPS = [
   "you hit session limit, resume",
   "not fixed, try again, make sure changes you made are needed otherwise remove what you just added",
+  "make no mistakes",
 ];
 
 let counter = 0;

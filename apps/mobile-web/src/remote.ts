@@ -20,9 +20,9 @@ export interface FirebaseWebConfig {
 const DEFAULT_EDGE_URL = "https://edge.whipdesk.com";
 const EDGE_WS_PROTOCOL = "whipdesk.v1";
 
-// Our own STUN as the only fallback (no public/free STUN). The backend normally supplies the
-// full STUN+TURN list via fetchIceServers; this is used only if that fetch fails.
-const STUN = [{ urls: "stun:turn-us1.whipdesk.com:3478" }];
+// Public STUN fallback (Google's free servers). The backend normally supplies the full STUN+TURN
+// list via fetchIceServers; this is used only if that fetch fails.
+const STUN = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
 
 /** Read the selected ICE route from getStats: TURN (relay), STUN (srflx), or LAN (host). */
 async function detectTransport(pc: RTCPeerConnection): Promise<"TURN" | "STUN" | "LAN" | null> {

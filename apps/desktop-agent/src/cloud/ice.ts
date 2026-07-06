@@ -10,9 +10,12 @@ export interface IceServer {
   credential?: string;
 }
 
-// Our own STUN as the only fallback (no reliance on public/free STUN that can disappear). The
-// edge normally returns the full STUN+TURN list; this is used solely if that fetch fails.
-const FALLBACK_STUN: IceServer[] = [{ urls: "stun:turn-us1.whipdesk.com:3478" }];
+// Public STUN fallback (Google's free servers) — used ONLY if fetching the real STUN+TURN list from
+// the edge fails. Our own relay hostnames are are minted and returned at runtime by the edge worker (see fetchIceServers below).
+const FALLBACK_STUN: IceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
 
 interface CachedIce {
   servers: IceServer[];

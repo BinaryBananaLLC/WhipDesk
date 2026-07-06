@@ -14,6 +14,8 @@ export type IconName =
   | "minus"
   | "chevron-down"
   | "chevron-up"
+  | "chevron-left"
+  | "chevron-right"
   | "pointer"
   | "scroll-up"
   | "scroll-down"
@@ -51,6 +53,8 @@ const PATHS: Record<IconName, string> = {
   minus: '<path d="M5 12h14"/>',
   "chevron-down": '<path d="m6 9 6 6 6-6"/>',
   "chevron-up": '<path d="m6 15 6-6 6 6"/>',
+  "chevron-left": '<path d="m15 6-6 6 6 6"/>',
+  "chevron-right": '<path d="m9 6 6 6-6 6"/>',
   pointer: '<path d="m4 4 6 16 2.5-6.5L19 11Z"/>',
   "scroll-up": '<path d="m6 14 6-6 6 6"/><path d="M12 8v11"/>',
   "scroll-down": '<path d="m6 10 6 6 6-6"/><path d="M12 16V5"/>',
@@ -62,7 +66,8 @@ const PATHS: Record<IconName, string> = {
   "double-click": '<path d="m4 4 6 16 2.5-6.5L19 11Z"/><path d="M18 4v3M21 6h-3"/>',
   drag: '<path d="M12 2v20M2 12h20" /><path d="m8 6 4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>',
   send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4Z"/>',
-  insert: '<path d="M12 5v14M5 12h7"/><rect x="16" y="4" width="4" height="16" rx="1"/>',
+  // Arrow dropping down into an open text field — reads as "insert this into the box you're typing in".
+  insert: '<path d="M12 3v8m-3.5-3.5L12 11l3.5-3.5"/><path d="M5 14v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   power: '<path d="M12 3v9"/><path d="M6.4 7.4a8 8 0 1 0 11.2 0"/>',

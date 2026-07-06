@@ -471,9 +471,44 @@ textarea {
 .wd-fullscreen {
   display: none;
 }
+/* Hide-the-whole-ribbon toggle: only on a touch device in landscape, where vertical space is
+   scarcest. Sits to the right of the collapse chevron. */
+.wd-hide-ribbon {
+  display: none;
+}
 @media (pointer: coarse) and (orientation: landscape) {
   .wd-fullscreen {
     display: grid;
+  }
+  .wd-hide-ribbon {
+    display: grid;
+  }
+  /* Folded away: the ribbon shrinks to just the restore handle floating at the bottom-right, so the
+     entire screen height is free. Everything but the toggle button is hidden. */
+  .wd-ribbon.ribbon-hidden {
+    left: auto;
+    right: 0;
+    /* hug the handle so the (now transparent) container never blocks taps on the screen behind it,
+       including the centered/width-capped desktop-ribbon layout above 820px. */
+    width: auto;
+    transform: none;
+    background: transparent;
+    border-top: none;
+    border: none;
+    box-shadow: none;
+  }
+  .wd-ribbon.ribbon-hidden .wd-options,
+  .wd-ribbon.ribbon-hidden .wd-tabs > :not(.wd-hide-ribbon) {
+    display: none;
+  }
+  .wd-ribbon.ribbon-hidden .wd-tabs {
+    padding: 6px;
+    justify-content: flex-end;
+  }
+  .wd-ribbon.ribbon-hidden .wd-hide-ribbon {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    box-shadow: 0 -2px 10px var(--shadow);
   }
 }
 

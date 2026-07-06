@@ -177,6 +177,8 @@ export class Controls {
   private readonly tabButtons = new Map<Tab, HTMLButtonElement>();
   private readonly tabPanes = new Map<Tab, HTMLElement>();
   private collapseBtn!: HTMLButtonElement;
+  private hideRibbonBtn!: HTMLButtonElement;
+  private ribbon!: HTMLElement;
   private fullscreenBtn: HTMLButtonElement | null = null;
   private interactHost!: HTMLElement;
 
@@ -186,6 +188,7 @@ export class Controls {
   private activeTab: Tab | null = null;
   private interactMode: "mouse" | "touch" = "mouse";
   private collapsed = false;
+  private ribbonHidden = false;
   private deviceName = "";
   private transport = "";
   private presenceCount = 1;
@@ -463,6 +466,7 @@ export class Controls {
 
     // --- bottom ribbon ---
     const ribbon = el("div", "wd-ribbon");
+    this.ribbon = ribbon;
     this.panel = el("div", "wd-panel");
     this.optionsArea = el("div", "wd-options");
 
@@ -502,6 +506,15 @@ export class Controls {
     this.collapseBtn = iconBtn("chevron-down", "", "wd-collapse");
     this.collapseBtn.onclick = () => this.setCollapsed(!this.collapsed);
     tabs.appendChild(this.collapseBtn);
+
+    // Hide-the-whole-ribbon toggle — CSS shows it only on a touch device in landscape (like the
+    // fullscreen button), where vertical space is scarcest. ">" folds the entire ribbon away to a
+    // slim handle on the right edge; "<" brings it back. Frees the full screen height for the view.
+    this.hideRibbonBtn = iconBtn("chevron-right", "", "wd-collapse wd-hide-ribbon");
+    this.hideRibbonBtn.setAttribute("aria-label", "Hide the whole ribbon");
+    this.hideRibbonBtn.title = "Hide toolbar";
+    this.hideRibbonBtn.onclick = () => this.setRibbonHidden(!this.ribbonHidden);
+    tabs.appendChild(this.hideRibbonBtn);
 
     this.panel.append(this.optionsArea, tabs);
     ribbon.appendChild(this.panel);
@@ -775,6 +788,15 @@ export class Controls {
     this.collapsed = collapsed;
     this.optionsArea.classList.toggle("hidden", collapsed);
     this.collapseBtn.replaceChildren(icon(collapsed ? "chevron-up" : "chevron-down"));
+  }
+
+  private setRibbonHidden(hidden: boolean): void {
+    this.ribbonHidden = hidden;
+    this.ribbon.classList.toggle("ribbon-hidden", hidden);
+    // ">" folds it away; the lone "<" handle brings it back.
+    this.hideRibbonBtn.replaceChildren(icon(hidden ? "chevron-left" : "chevron-right"));
+    this.hideRibbonBtn.title = hidden ? "Show toolbar" : "Hide toolbar";
+    this.hideRibbonBtn.setAttribute("aria-label", hidden ? "Show the ribbon" : "Hide the whole ribbon");
   }
 
   private sendText(submit: boolean): void {
