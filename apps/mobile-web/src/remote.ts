@@ -73,9 +73,10 @@ export class RemoteConnection {
   private reconnectTimer = 0;
   // getStats-driven link quality (fps + rtt) for the connection dialog.
   private statsTimer = 0;
-  // Time-on-WhipDesk accounting: connected seconds flushed every minute (and on teardown) into
-  // users/{uid}.stats.secs — the Stats page turns the total into "You enjoyed WhipDesk for X hrs".
-  private timeTimer = 0;
+  // Time-on-WhipDesk accounting: connected seconds banked into users/{uid}.stats.secs ONCE per
+  // session (teardown/disconnect/pagehide) — the Stats page turns the total into "You enjoyed
+  // WhipDesk for X hrs". Never flush this on a timer: a per-minute flush is one Firestore write
+  // per user per minute, which at scale is millions of writes a day for a vanity counter.
   private flushConnectedTime: (() => void) | null = null;
 
   constructor(
@@ -93,8 +94,8 @@ export class RemoteConnection {
         }
       }
     });
-    // A closed/backgrounded tab skips teardown — bank the current minute here too (best-effort:
-    // the write may not finish during unload, costing at most ~60s of counted time).
+    // A closed/backgrounded tab skips teardown — bank the session here instead (best-effort: the
+    // write may not finish during unload; an undercounted session beats a per-minute write bill).
     window.addEventListener("pagehide", () => this.flushConnectedTime?.());
   }
 
@@ -154,9 +155,7 @@ export class RemoteConnection {
   private teardown(): void {
     window.clearInterval(this.statsTimer);
     this.statsTimer = 0;
-    window.clearInterval(this.timeTimer);
-    this.timeTimer = 0;
-    this.flushConnectedTime?.(); // bank the tail of the session before the pc closes
+    this.flushConnectedTime?.(); // bank the session before the pc closes
     this.flushConnectedTime = null;
     if (this.signalWs) {
       const ws = this.signalWs;
@@ -282,14 +281,15 @@ export class RemoteConnection {
       }
     };
 
-    // Time-on-WhipDesk: bank connected seconds into users/{uid}.stats.secs. Flushed once a minute
-    // and on teardown/disconnect, so a killed tab loses at most the last minute. All-time only —
-    // the statsMonthly rules allow just the lan/stun/turn counters.
+    // Time-on-WhipDesk: bank connected seconds into users/{uid}.stats.secs, ONE write per session
+    // end (teardown/disconnect/pagehide). A hard-killed tab loses that session's time — accepted:
+    // this is a feel-good counter, not billing, and periodic flushing costs real Firestore money.
+    // All-time only — the statsMonthly rules allow just the lan/stun/turn counters.
     let connectedSince = 0;
-    const flushTime = (final = false) => {
+    const flushTime = () => {
       if (!connectedSince) return;
       const secs = Math.round((Date.now() - connectedSince) / 1000);
-      connectedSince = !final && pc.connectionState === "connected" ? Date.now() : 0;
+      connectedSince = 0;
       if (secs < 1) return;
       void (async () => {
         const { getFirestore, doc, setDoc, increment } = await import("firebase/firestore");
@@ -298,9 +298,7 @@ export class RemoteConnection {
         /* best-effort */
       });
     };
-    this.flushConnectedTime = () => flushTime(true);
-    window.clearInterval(this.timeTimer);
-    this.timeTimer = window.setInterval(flushTime, 60_000);
+    this.flushConnectedTime = flushTime;
 
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
@@ -310,7 +308,7 @@ export class RemoteConnection {
         void reportTransport();
         this.startStatsPoll(pc);
       } else if (s === "failed" || s === "disconnected" || s === "closed") {
-        flushTime(true);
+        flushTime();
         this.core.emit("status", "disconnected");
         this.scheduleReconnect();
       }

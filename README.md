@@ -200,7 +200,9 @@ locked to your own account by your verified sign-in.
 
 **Prefer your own backend?** Point the agent at your own Firebase project + edge service by
 dropping a web config (plus an `edgeUrl`) in `.whipdesk/firebase.json` (gitignored) — that file
-is the only override, and it replaces the baked-in default.
+is the only override, and it replaces the baked-in default. The full walkthrough, including the
+small signaling contract your edge needs to speak, is in
+[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
 
 ## Project layout
 
@@ -210,13 +212,16 @@ apps/desktop-agent/      Node host: capture, input, server, watchers, cloud
 apps/mobile-web/         Vite PWA controller, served by the agent
 scripts/                 notify.mjs + smoke-test harnesses
 docs/ARCHITECTURE.md     Design rationale
+docs/SELF_HOSTING.md     LAN-only setup + bring-your-own backend guide
 docs/HOOKS.md            Optional agent-native hooks for instant monitoring alerts
 ```
 
 ## Contributing
 
-PRs welcome. Read [AGENTS.md](AGENTS.md) first — it's the operating contract for both humans and
-AI coding agents (where each change goes, the wire-contract-first rule, how to verify). In short:
+PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[code of conduct](CODE_OF_CONDUCT.md). Read [AGENTS.md](AGENTS.md) first — it's the operating
+contract for both humans and AI coding agents (where each change goes, the wire-contract-first
+rule, how to verify). In short:
 
 ```bash
 npm run typecheck    # tsc --noEmit across workspaces
