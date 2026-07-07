@@ -382,7 +382,7 @@ export class InputController {
     // The Pan tool owns one-finger input: grabbing the view must never click through.
     if (this.isPanning()) return;
 
-    // Tap = click at the touched point, in EVERY mode — Viewer included, which also covers the
+    // Tap = click at the touched point, in EVERY mode — Browse included, which also covers the
     // Type and Monitor tabs: the screen behaves like the machine's own touchscreen. Consecutive
     // fast taps are consecutive clicks, so a double-tap IS a double click and a triple-tap a
     // triple (the clicks ride one ordered channel and arrive as tightly as they were tapped).

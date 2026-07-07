@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import { hostname, platform } from "node:os";
+import { platform } from "node:os";
 import { AGENT_VERSION } from "./config";
 import { loadCloudConfig, loadDeviceIdentity } from "./cloud/config";
 import { clearPersistedAuth, ensureAgentAuth, getPersistedAuthSummary } from "./cloud/auth";
@@ -78,12 +78,17 @@ async function main(): Promise<void> {
         auth,
         device: () => ({
           id: identity.deviceId,
-          name: hostname(),
+          // User-chosen display name when set (persisted in the state dir), else the hostname.
+          name: ctx.getMachineName(),
           platform: platform(),
           version: AGENT_VERSION,
           lan: getLan(),
         }),
       });
+      // A rename from a controller re-announces immediately, so the dashboard card updates live
+      // instead of waiting for the next edge reconnect.
+      const edgeClient = edge;
+      ctx.onMachineNameChanged = () => edgeClient.announce();
       // Off-LAN ICE (STUN-first, ephemeral TURN) is minted by the edge; the agent never holds
       // the relay secret — it just presents its ID token. Falls back to our own STUN.
       signaling = startSignaling(ctx, edge, () => fetchIceServers(cloud, auth, edge ?? undefined));

@@ -73,6 +73,10 @@ export class RemoteConnection {
   private reconnectTimer = 0;
   // getStats-driven link quality (fps + rtt) for the connection dialog.
   private statsTimer = 0;
+  // Time-on-WhipDesk accounting: connected seconds flushed every minute (and on teardown) into
+  // users/{uid}.stats.secs — the Stats page turns the total into "You enjoyed WhipDesk for X hrs".
+  private timeTimer = 0;
+  private flushConnectedTime: (() => void) | null = null;
 
   constructor(
     private readonly deviceId: string,
@@ -89,6 +93,9 @@ export class RemoteConnection {
         }
       }
     });
+    // A closed/backgrounded tab skips teardown — bank the current minute here too (best-effort:
+    // the write may not finish during unload, costing at most ~60s of counted time).
+    window.addEventListener("pagehide", () => this.flushConnectedTime?.());
   }
 
   on<K extends keyof ControllerEvents>(event: K, handler: (value: ControllerEvents[K]) => void): void {
@@ -147,6 +154,10 @@ export class RemoteConnection {
   private teardown(): void {
     window.clearInterval(this.statsTimer);
     this.statsTimer = 0;
+    window.clearInterval(this.timeTimer);
+    this.timeTimer = 0;
+    this.flushConnectedTime?.(); // bank the tail of the session before the pc closes
+    this.flushConnectedTime = null;
     if (this.signalWs) {
       const ws = this.signalWs;
       this.signalWs = null;
@@ -255,10 +266,10 @@ export class RemoteConnection {
       // One write per connection. Stats are PERSISTENT user data -> Firestore. We bump TWO counters:
       // the all-time map on the user doc, and a per-month doc (users/{uid}/statsMonthly/{YYYY-MM})
       // so the dashboard can show "all time" vs "this/last month" without scanning history. Month id
-      // is UTC and MUST match the reader (WWW lib/devices.ts monthId).
+      // is UTC, taken straight off the ISO string (no hand-rolled month math — getUTCMonth() is
+      // 0-based and off-by-one bugs love it), and MUST match the reader (WWW lib/devices.ts monthId).
       const key = kind === "TURN" ? "turn" : kind === "STUN" ? "stun" : "lan";
-      const now = new Date();
-      const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+      const ym = new Date().toISOString().slice(0, 7);
       try {
         const { getFirestore, doc, setDoc, increment } = await import("firebase/firestore");
         const fs = getFirestore(app);
@@ -271,13 +282,35 @@ export class RemoteConnection {
       }
     };
 
+    // Time-on-WhipDesk: bank connected seconds into users/{uid}.stats.secs. Flushed once a minute
+    // and on teardown/disconnect, so a killed tab loses at most the last minute. All-time only —
+    // the statsMonthly rules allow just the lan/stun/turn counters.
+    let connectedSince = 0;
+    const flushTime = (final = false) => {
+      if (!connectedSince) return;
+      const secs = Math.round((Date.now() - connectedSince) / 1000);
+      connectedSince = !final && pc.connectionState === "connected" ? Date.now() : 0;
+      if (secs < 1) return;
+      void (async () => {
+        const { getFirestore, doc, setDoc, increment } = await import("firebase/firestore");
+        await setDoc(doc(getFirestore(app), "users", uid), { stats: { secs: increment(secs) } }, { merge: true });
+      })().catch(() => {
+        /* best-effort */
+      });
+    };
+    this.flushConnectedTime = () => flushTime(true);
+    window.clearInterval(this.timeTimer);
+    this.timeTimer = window.setInterval(flushTime, 60_000);
+
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
       if (s === "connected") {
         this.core.emit("status", "connected");
+        if (!connectedSince) connectedSince = Date.now();
         void reportTransport();
         this.startStatsPoll(pc);
       } else if (s === "failed" || s === "disconnected" || s === "closed") {
+        flushTime(true);
         this.core.emit("status", "disconnected");
         this.scheduleReconnect();
       }

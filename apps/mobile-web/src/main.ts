@@ -302,6 +302,8 @@ async function start(): Promise<void> {
     pinPrompt.show(req, (pin) => conn.submitPin(pin));
   });
   conn.on("presence", (count) => controls.setPresence(count));
+  // Live rename echo: the agent broadcasts the new display name to every connected controller.
+  conn.on("machineName", (name) => controls.setDeviceName(name));
   let regionCount = 0;
   let timerCount = 0;
   let monitorCount = 0;

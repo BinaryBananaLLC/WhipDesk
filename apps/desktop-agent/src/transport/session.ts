@@ -1,5 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { hostname, platform } from "node:os";
+import { platform } from "node:os";
 import {
   PROTOCOL_VERSION,
   isClientMessage,
@@ -181,7 +181,7 @@ function buildWelcome(ctx: AgentContext): WelcomeMessage {
   return {
     type: "welcome",
     protocol: PROTOCOL_VERSION,
-    agent: { version: AGENT_VERSION, platform: platform(), hostname: hostname(), hdr: ctx.hdrActive || undefined },
+    agent: { version: AGENT_VERSION, platform: platform(), hostname: ctx.getMachineName(), hdr: ctx.hdrActive || undefined },
     screen: ctx.screen,
     capture: { fps: ctx.config.fps, quality: ctx.config.quality, maxWidth: ctx.config.maxWidth },
     capabilities: {
@@ -263,6 +263,9 @@ async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Contr
       break;
     case "visibility":
       ctx.setVisibility(controller, msg.visible);
+      break;
+    case "rename-machine":
+      ctx.setMachineName(msg.name);
       break;
     case "video-stats":
       ctx.reportVideoStats(msg.lossPct, msg.rttMs);

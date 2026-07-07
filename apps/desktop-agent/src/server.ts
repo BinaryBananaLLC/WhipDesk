@@ -4,8 +4,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { DEFAULTS, type AgentKind, type MonitorAddMessage, type MonitorInfo, type ScheduledAction, type ScreenInfo, type ServerMessage, type TimerAddMessage, type TimerInfo, type WatchRegion } from "@whipdesk/protocol";
+import { hostname } from "node:os";
 import { safeEqual } from "./transport/session";
-import { AGENT_VERSION, loadConfig, type AgentConfig } from "./config";
+import { AGENT_VERSION, loadConfig, loadMachineName, saveMachineName, type AgentConfig } from "./config";
 import { ScreenCapturer, isFullViewport, type Viewport } from "./capture/screen";
 import { listDisplayGeometry, type DisplayGeometry } from "./capture/displays";
 import { selectInputBackend, type InputBackend } from "./input";
@@ -91,6 +92,12 @@ export interface AgentContext {
   listAlwaysAgents(): AgentKind[];
   /** Client-reported video link stats; drives the encoder's adaptive quality ladder. */
   reportVideoStats(lossPct: number, rttMs?: number): void;
+  /** The machine's display name: the user-chosen one when set, else the OS hostname. */
+  getMachineName(): string;
+  /** Persist a user-chosen display name ("" reverts to the hostname) and broadcast it. */
+  setMachineName(name: string): void;
+  /** Hook for the cloud layer: re-announce the device to the edge hub after a rename. */
+  onMachineNameChanged?: () => void;
 }
 
 export async function startAgent(): Promise<{ server: Server; config: AgentConfig; presence: Presence; keepAwake: KeepAwake; ctx: AgentContext }> {
@@ -142,6 +149,9 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
 
   const controllers = new Set<Controller>();
   let fps = config.fps;
+
+  // User-chosen display name (from the controller's connection dialog); "" = use the hostname.
+  let machineName = loadMachineName(config.stateDir);
 
   // Adaptive quality ladder: the client reports getStats loss every few seconds; sustained loss
   // steps the encoder down IMMEDIATELY (each step is a cheap restart — the RTP restamper keeps the
@@ -464,6 +474,17 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     setVisibility(controller, visible) {
       controller.visible = visible;
       recomputeVideoPause();
+    },
+    getMachineName() {
+      return machineName || hostname();
+    },
+    setMachineName(name) {
+      machineName = name.trim().slice(0, 64);
+      saveMachineName(config.stateDir, machineName);
+      const effective = ctx.getMachineName();
+      log.info(`machine renamed to "${effective}"`);
+      for (const c of controllers) c.send({ type: "machine-name", name: effective });
+      ctx.onMachineNameChanged?.(); // let the cloud layer re-announce to the edge hub
     },
     reportVideoStats(lossPct) {
       if (!video || !Number.isFinite(lossPct)) return;

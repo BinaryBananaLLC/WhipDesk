@@ -232,7 +232,7 @@ textarea {
   align-items: stretch;
   gap: 8px;
 }
-/* Viewer is ONE row, period. Both the pane and the group item-rows are nowrap, so no button —
+/* Browse is ONE row, period. Both the pane and the group item-rows are nowrap, so no button —
    including the ones inside Zoom/Scroll — can ever drop to a second line. Sizes are mobile-first
    (compact enough to fit ~320px) and grow on wider screens. min-width:0 lets groups shrink so the
    row stays on a single line; overflow-x is only a last-ditch safety net (hidden scrollbar). */
@@ -483,8 +483,23 @@ textarea {
   .wd-hide-ribbon {
     display: grid;
   }
-  /* Folded away: the ribbon shrinks to just the restore handle floating at the bottom-right, so the
-     entire screen height is free. Everything but the toggle button is hidden. */
+}
+/* Portrait phones: no room for a third button, so the hide-ribbon toggle appears only once the
+   pane is collapsed — and REPLACES the pane chevron. Collapse a tab → ">" offers to fold the whole
+   menu away; expand a tab again → the pane chevron returns and ">" hides. Landscape and desktop
+   keep their existing layout (both buttons in landscape, neither extra on desktop). */
+@media (pointer: coarse) and (orientation: portrait) {
+  .wd-ribbon.collapsed .wd-collapse-pane {
+    display: none;
+  }
+  .wd-ribbon.collapsed .wd-hide-ribbon {
+    display: grid;
+  }
+}
+/* Folded away: the ribbon shrinks to just the restore handle floating at the bottom-right, so the
+   entire screen height is free. Everything but the toggle button is hidden. Applies in BOTH
+   orientations on touch devices (portrait reaches it via the collapsed-state ">" button). */
+@media (pointer: coarse) {
   .wd-ribbon.ribbon-hidden {
     left: auto;
     right: 0;
@@ -505,7 +520,10 @@ textarea {
     padding: 6px;
     justify-content: flex-end;
   }
+  /* The restore handle must stay visible whenever the ribbon is hidden — including a device rotated
+     to portrait AFTER hiding it in landscape (where the pane may not be collapsed). */
   .wd-ribbon.ribbon-hidden .wd-hide-ribbon {
+    display: grid;
     background: var(--panel);
     border: 1px solid var(--border);
     box-shadow: 0 -2px 10px var(--shadow);
@@ -1333,6 +1351,41 @@ textarea {
   font-weight: 600;
   color: var(--text);
   word-break: break-word;
+}
+/* Machine row: name + pencil (rename). The pencil swaps into an inline input + ✓ save button. */
+.wd-conn-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wd-conn-edit {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.wd-conn-edit:hover {
+  color: var(--text);
+}
+.wd-conn-name-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
 }
 .wd-conn-route {
   flex: 1;

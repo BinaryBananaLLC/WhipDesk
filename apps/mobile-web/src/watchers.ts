@@ -6,6 +6,7 @@ import type { Whipository } from "./whipository";
 import { icon } from "./icons";
 import { placeTarget } from "./placement";
 import { GITHUB_URL } from "./site";
+import whipMark from "./assets/whip.png";
 
 let counter = 0;
 function uid(): string {
@@ -108,7 +109,15 @@ export class RegionWatchers {
     });
     const card = el("div", "wd-dialog");
     const head = el("div", "wd-dialog-head");
-    head.append(el("h2", "", "Auto-Whips"));
+    // Whip mark + title, same treatment as the Whipository dialog header.
+    const titleWrap = el("div", "wd-dialog-title");
+    const mark = document.createElement("img");
+    mark.src = whipMark;
+    mark.alt = "";
+    mark.decoding = "async";
+    mark.className = "wd-dialog-title-icon";
+    titleWrap.append(mark, el("h2", "", "Auto-Whips"));
+    head.append(titleWrap);
     const close = el("button", "wd-dialog-x");
     close.appendChild(icon("x"));
     close.onclick = () => this.close();

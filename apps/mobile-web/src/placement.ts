@@ -20,7 +20,7 @@ export interface PlacementOptions {
 
 /**
  * Full-screen "place a target" mode for scheduling a timer action. The user can pan + pinch-zoom
- * the LIVE screen (like Viewer mode) and drop a crosshair on the exact element — then Confirm. For
+ * the LIVE screen (like Browse mode) and drop a crosshair on the exact element — then Confirm. For
  * a prompt action they type the text right here, seeing where it will land. All gestures are
  * handled locally, so nothing reaches the host (no stray clicks on the real machine).
  *

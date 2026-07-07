@@ -32,6 +32,7 @@ export type IconName =
   | "power"
   | "activity"
   | "x"
+  | "check"
   | "heart"
   | "trash"
   | "book"
@@ -73,6 +74,7 @@ const PATHS: Record<IconName, string> = {
   power: '<path d="M12 3v9"/><path d="M6.4 7.4a8 8 0 1 0 11.2 0"/>',
   activity: '<path d="M3 12h4l2-7 4 14 2-7h6"/>',
   x: '<path d="M6 6 18 18M18 6 6 18"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
   heart: '<path d="M12 20s-7-4.4-9.3-8.5a4.5 4.5 0 0 1 8.1-3.9l1.2 1.6 1.2-1.6a4.5 4.5 0 0 1 8.1 3.9C19 15.6 12 20 12 20Z"/>',
   trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>',
   book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/>',

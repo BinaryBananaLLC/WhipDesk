@@ -306,6 +306,17 @@ export interface VideoStatsMessage {
   rttMs?: number;
 }
 
+/**
+ * Give this machine a friendly display name (e.g. "Work laptop" instead of "DESKTOP-4F2K1").
+ * The agent persists it in its state dir and uses it everywhere from then on: the welcome
+ * message, the dashboard registry, and the connection dialog. An empty name reverts to the
+ * OS hostname. The agent confirms with a `machine-name` broadcast to every controller.
+ */
+export interface RenameMachineMessage {
+  type: "rename-machine";
+  name: string;
+}
+
 export interface PingMessage {
   type: "ping";
   t: number;
@@ -332,6 +343,7 @@ export type ClientMessage =
   | MonitorRemoveMessage
   | MonitorAlwaysMessage
   | VideoStatsMessage
+  | RenameMachineMessage
   | PingMessage;
 
 // ---------------------------------------------------------------------------
@@ -498,6 +510,12 @@ export interface NotificationMessage {
   t: number;
 }
 
+/** The machine's (possibly just-renamed) display name — broadcast after a `rename-machine`. */
+export interface MachineNameMessage {
+  type: "machine-name";
+  name: string;
+}
+
 export interface PongMessage {
   type: "pong";
   t: number;
@@ -524,6 +542,7 @@ export type ServerMessage =
   | MonitorsMessage
   | MonitorAlwaysAgentsMessage
   | NotificationMessage
+  | MachineNameMessage
   | PongMessage
   | ErrorMessage;
 

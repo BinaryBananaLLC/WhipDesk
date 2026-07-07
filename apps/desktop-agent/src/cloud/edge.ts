@@ -116,6 +116,14 @@ export class EdgeClient {
     }
   }
 
+  /** Re-send the hello (device metadata) on the open socket — e.g. after a machine rename. The
+   * hub treats a repeat hello as a registry update and broadcasts the delta to open dashboards.
+   * No-op while disconnected: the next reconnect's hello carries the fresh metadata anyway. */
+  announce(): void {
+    if (!this.isConnected()) return;
+    this.send({ t: "hello", device: this.options.device() });
+  }
+
   /** In-band ICE mint (STUN + ephemeral TURN) over the already-open hub socket. */
   requestIce(): Promise<{ iceServers: IceServer[]; ttlSec: number } | null> {
     if (!this.isConnected()) return Promise.resolve(null);

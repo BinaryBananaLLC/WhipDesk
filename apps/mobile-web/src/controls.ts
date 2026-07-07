@@ -143,9 +143,9 @@ function transportLabel(t: string): string {
  * The mobile UI: a top status bar + a collapsible bottom ribbon with one tab per task.
  * Only the active tab's controls are shown, so buttons never stack or overlap.
  *
- *  - Viewer:   zoom −/+, pan, scroll/page; tap the screen to click, just like the real device.
- *  - Interact: full control — Mouse|Touch segment, then Left/Right/Double/Drag/Scroll.
+ *  - Browse:   zoom −/+, pan, scroll/page; tap the screen to click, just like the real device.
  *  - Type:     write text — textarea + special keys + Insert (no Enter) / Send (Enter).
+ *  - Interact: full control — Mouse|Touch segment, then Left/Right/Double/Drag/Scroll.
  *  - Monitor:  pick which display to view + control.
  *
  * A chevron collapses the whole ribbon to a slim handle to free the screen.
@@ -314,10 +314,20 @@ export class Controls {
     statusVal.append(this.connStatusDot, this.connStatusText);
     statusRow.appendChild(statusVal);
 
+    // Machine row: name + a small pencil to rename it. The new name is persisted BY THE AGENT
+    // (its state dir), so it sticks across restarts and shows up everywhere — status pill,
+    // dashboard card, this dialog — not just in this browser.
     const nameRow = el("div", "wd-conn-row");
     nameRow.append(el("span", "wd-conn-label", "Machine"));
     this.connName = el("span", "wd-conn-value", "—");
-    nameRow.appendChild(this.connName);
+    const nameWrap = el("div", "wd-conn-name");
+    const editName = el("button", "wd-conn-edit");
+    editName.appendChild(icon("pencil", 14));
+    editName.title = "Rename this machine";
+    editName.setAttribute("aria-label", "Rename this machine");
+    editName.onclick = () => this.beginRenameMachine(nameWrap, editName);
+    nameWrap.append(this.connName, editName);
+    nameRow.appendChild(nameWrap);
 
     // Heads-up when the HOST desktop runs in HDR: the agent tone-maps the stream to SDR, but it
     // can still look washed compared to the real screen — say so here instead of looking broken.
@@ -412,6 +422,45 @@ export class Controls {
     if (this.connectionOverlay && !this.connectionOverlay.classList.contains("hidden")) this.renderSpeed();
   }
 
+  /** Swap the Machine row's value into an inline editor (input + save). Enter saves, Esc cancels. */
+  private beginRenameMachine(wrap: HTMLElement, editBtn: HTMLButtonElement): void {
+    const input = el("input", "wd-conn-name-input");
+    input.type = "text";
+    input.maxLength = 64;
+    input.value = this.deviceName;
+    input.placeholder = "Machine name";
+    const done = () => wrap.replaceChildren(this.connName, editBtn);
+    const save = el("button", "wd-conn-edit");
+    save.appendChild(icon("check", 14));
+    save.title = "Save name";
+    save.setAttribute("aria-label", "Save name");
+    const commit = () => {
+      const name = input.value.trim().slice(0, 64);
+      done();
+      if (!name || name === this.deviceName) return;
+      // Optimistic update; the agent persists the name and echoes a machine-name broadcast so
+      // every other connected controller updates too.
+      this.deps.conn.send({ type: "rename-machine", name });
+      this.setDeviceName(name);
+    };
+    save.onclick = commit;
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") commit();
+      else if (e.key === "Escape") done();
+    };
+    wrap.replaceChildren(input, save);
+    input.focus();
+    input.select();
+  }
+
+  /** Update the machine's display name everywhere (status pill + connection dialog). */
+  setDeviceName(name: string): void {
+    if (!name || name === this.deviceName) return;
+    this.deviceName = name;
+    this.renderStatusText();
+    if (this.connectionOverlay && !this.connectionOverlay.classList.contains("hidden")) this.renderConnection();
+  }
+
   private openConnection(): void {
     this.renderConnection();
     this.connectionOverlay.classList.remove("hidden");
@@ -485,9 +534,9 @@ export class Controls {
       this.tabButtons.set(tab, b);
       tabs.appendChild(b);
     };
-    addTab("viewer", "eye", "Viewer");
-    addTab("interact", "mouse", "Interact");
+    addTab("viewer", "eye", "Browse");
     addTab("type", "keyboard", "Type");
+    addTab("interact", "mouse", "Interact");
     addTab("monitor", "monitor", "Monitor");
 
     // Fullscreen toggle — CSS reveals it only on a touch device in landscape, where the browser
@@ -503,13 +552,14 @@ export class Controls {
       document.addEventListener("fullscreenchange", () => this.syncFullscreenBtn());
     }
 
-    this.collapseBtn = iconBtn("chevron-down", "", "wd-collapse");
+    this.collapseBtn = iconBtn("chevron-down", "", "wd-collapse wd-collapse-pane");
     this.collapseBtn.onclick = () => this.setCollapsed(!this.collapsed);
     tabs.appendChild(this.collapseBtn);
 
-    // Hide-the-whole-ribbon toggle — CSS shows it only on a touch device in landscape (like the
-    // fullscreen button), where vertical space is scarcest. ">" folds the entire ribbon away to a
-    // slim handle on the right edge; "<" brings it back. Frees the full screen height for the view.
+    // Hide-the-whole-ribbon toggle — CSS shows it on a touch device in landscape (like the
+    // fullscreen button), and in portrait only while the pane is collapsed, where it REPLACES the
+    // pane chevron so the whole menu can be folded away on phones too. ">" folds the entire ribbon
+    // away to a slim handle on the right edge; "<" brings it back. Frees the full screen height.
     this.hideRibbonBtn = iconBtn("chevron-right", "", "wd-collapse wd-hide-ribbon");
     this.hideRibbonBtn.setAttribute("aria-label", "Hide the whole ribbon");
     this.hideRibbonBtn.title = "Hide toolbar";
@@ -787,6 +837,8 @@ export class Controls {
   private setCollapsed(collapsed: boolean): void {
     this.collapsed = collapsed;
     this.optionsArea.classList.toggle("hidden", collapsed);
+    // Mirrored on the ribbon so CSS can swap the pane chevron for the hide-ribbon toggle in portrait.
+    this.ribbon.classList.toggle("collapsed", collapsed);
     this.collapseBtn.replaceChildren(icon(collapsed ? "chevron-up" : "chevron-down"));
   }
 

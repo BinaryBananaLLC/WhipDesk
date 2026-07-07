@@ -40,6 +40,8 @@ export interface ControllerEvents {
   netStats: { fps: number; rtt: number | null };
   notification: NotificationMessage;
   presence: number;
+  /** The machine's display name changed (someone renamed it via the connection dialog). */
+  machineName: string;
   pinRequired: PinRequest;
   watchers: WatchRegion[];
   timers: TimerInfo[];
@@ -97,6 +99,7 @@ export class ControllerCore {
     transport: new Set(),
     notification: new Set(),
     presence: new Set(),
+    machineName: new Set(),
     pinRequired: new Set(),
     watchers: new Set(),
     timers: new Set(),
@@ -209,6 +212,9 @@ export class ControllerCore {
         break;
       case "presence":
         this.emit("presence", message.watchers);
+        break;
+      case "machine-name":
+        this.emit("machineName", message.name);
         break;
       case "watchers":
         this.emit("watchers", message.regions);

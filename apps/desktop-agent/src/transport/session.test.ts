@@ -85,6 +85,8 @@ function makeCtx(stateDir: string, withPin: boolean): Harness {
     setAlwaysAgent: noop,
     listAlwaysAgents: () => [],
     reportVideoStats: noop,
+    getMachineName: () => "test-machine",
+    setMachineName: noop,
   } as unknown as AgentContext;
   harness.ctx = ctx;
   return harness;
