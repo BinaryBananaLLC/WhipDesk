@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { DEFAULTS, type AgentKind, type MonitorAddMessage, type MonitorInfo, type ScheduledAction, type ScreenInfo, type ServerMessage, type TimerAddMessage, type TimerInfo, type WatchRegion } from "@whipdesk/protocol";
+import { DEFAULTS, LASH_LIMITS, type AgentKind, type Lash, type LashStep, type MonitorAddMessage, type MonitorInfo, type ScheduledAction, type ScreenInfo, type ServerMessage, type TimerAddMessage, type TimerInfo, type WatchRegion } from "@whipdesk/protocol";
 import { hostname } from "node:os";
 import { safeEqual } from "./transport/session";
 import { AGENT_VERSION, loadConfig, loadMachineName, saveMachineName, type AgentConfig } from "./config";
@@ -26,6 +26,7 @@ import { windowsHdrState } from "./capture/hdr-win";
 import { SessionMonitor } from "./monitor/monitor";
 import { loadAlwaysAgents, saveAlwaysAgents } from "./monitor/always-store";
 import { loadTimers, saveTimers, type StoredTimer } from "./timer-store";
+import { loadLashes, sanitizeLash, saveLashes } from "./lash-store";
 import { isPackaged } from "./util/paths";
 import { startUpdateChecks } from "./util/update-check";
 import { log } from "./logger";
@@ -81,6 +82,10 @@ export interface AgentContext {
   addTimer(msg: TimerAddMessage): void;
   removeTimer(id: string): void;
   listTimers(): TimerInfo[];
+  /** Create or update (by id) a lash in the LashStash (persisted in the state dir). */
+  saveLash(lash: Lash): void;
+  removeLash(id: string): void;
+  listLashes(): Lash[];
   /** (Re)scan for running AI-agent sessions and push the list to controllers. */
   scanMonitors(): Promise<void>;
   /** Start monitoring a discovered session; it pings once when the agent stops working. */
@@ -250,6 +255,95 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     }, 1000);
   };
 
+  // A legacy single-shot action expressed as the equivalent step sequence, so ONE executor
+  // (runSteps) serves both the original click/key/text timers and multi-step lashes.
+  const actionSteps = (a: ScheduledAction): LashStep[] => {
+    if (a.kind === "steps") return a.steps ?? [];
+    const steps: LashStep[] = [];
+    if (typeof a.x === "number" && typeof a.y === "number") {
+      steps.push({ kind: "click", x: a.x, y: a.y, button: a.button ?? "left" });
+    }
+    if (a.kind === "key" && a.key) steps.push({ kind: "key", key: a.key });
+    else if (a.kind === "text" && a.text) steps.push({ kind: "text", text: a.text, submit: true });
+    return steps;
+  };
+
+  /**
+   * Run a step sequence against the real desktop. Shared by timer actions and lash execution.
+   * Throws (loudly) instead of guessing when the environment no longer matches the recording —
+   * a locked session or a disconnected display means the clicks would land somewhere wrong.
+   */
+  const runSteps = async (steps: LashStep[], displayId: number | undefined) => {
+    // A scheduled action usually fires with nobody connected, so the display has slept and the
+    // session may have locked since it was scheduled. Synthetic input does NOT wake a slept
+    // panel, and events injected into a locked session land on the lock screen instead of the
+    // target app — the exact "timer fired but the work wasn't done" failure. Wake the panel
+    // first, give it a moment to come up, then refuse (loudly) if the session is locked. With a
+    // controller connected the display is already held awake, so only a short settle is needed.
+    displayWake.wake(30);
+    await delay(controllers.size > 0 ? 500 : 3000);
+    const locked = await isSessionLocked();
+    if (locked === true) {
+      throw new Error(
+        "the screen is locked, so the input would go to the lock screen instead of your app. " +
+          "For unattended scheduled work, set the machine to not require a password immediately after display sleep.",
+      );
+    }
+    // Pointer coords are relative to the display the steps were RECORDED on — the active display
+    // may have changed since. Aim the input mapper at that display for the whole run (keyboard
+    // input doesn't use display geometry, so this only affects clicks). If that display is gone,
+    // fail loudly rather than click the same spot on a wrong screen.
+    let restoreInput: (() => void) | null = null;
+    if (displayId !== undefined && displayId !== activeDisplay && steps.some((s) => s.kind === "click")) {
+      const pinned = displays.find((d) => d.id === displayId);
+      if (!pinned || pinned.width <= 0 || pinned.height <= 0) {
+        throw new Error(`the display it was recorded on ([${displayId}]) is no longer connected`);
+      }
+      input.setActiveDisplay({
+        originX: pinned.originX,
+        originY: pinned.originY,
+        width: pinned.width,
+        height: pinned.height,
+      });
+      restoreInput = () => {
+        const cur = displays.find((d) => d.id === activeDisplay);
+        input.setActiveDisplay(
+          cur && cur.width > 0 && cur.height > 0
+            ? { originX: cur.originX, originY: cur.originY, width: cur.width, height: cur.height }
+            : null,
+        );
+      };
+    }
+    try {
+      for (const [i, s] of steps.entries()) {
+        switch (s.kind) {
+          case "click":
+            if (typeof s.x !== "number" || typeof s.y !== "number") throw new Error("click step has no target");
+            await input.click(s.button ?? "left", s.double === true, s.x, s.y);
+            break;
+          case "key":
+            if (s.key) await input.keyTap(s.key, s.modifiers);
+            break;
+          case "text":
+            if (s.text) await input.typeText(s.text, s.submit !== false);
+            break;
+          case "wait":
+            await delay(Math.min(Math.max(0, s.ms ?? 0), LASH_LIMITS.MAX_WAIT_MS));
+            break;
+          default:
+            throw new Error(`unsupported step kind "${(s as LashStep).kind}" — update this agent`);
+        }
+        // Give the desktop a short beat between steps (an explicit wait already IS the beat):
+        // a click needs time to actually move focus before the next keystrokes, otherwise the
+        // first keys (e.g. the Enter that submits a prompt) land early and get dropped. This is
+        // the robustness gap that made auto-prompt timers flaky.
+        if (i < steps.length - 1 && s.kind !== "wait") await delay(250);
+      }
+    } finally {
+      restoreInput?.();
+    }
+  };
+
   const fireTimer = async (id: string) => {
     const t = timers.get(id);
     if (!t) return;
@@ -260,60 +354,7 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     if (a) {
       try {
         log.info(`timer "${t.label || id}" firing${a.kind ? ` (${a.kind})` : ""}`);
-        // A scheduled action usually fires with nobody connected, so the display has slept and the
-        // session may have locked since it was scheduled. Synthetic input does NOT wake a slept
-        // panel, and events injected into a locked session land on the lock screen instead of the
-        // target app — the exact "timer fired but the work wasn't done" failure. Wake the panel
-        // first, give it a moment to come up, then refuse (loudly) if the session is locked.
-        displayWake.wake(30);
-        await delay(3000);
-        const locked = await isSessionLocked();
-        if (locked === true) {
-          throw new Error(
-            "the screen is locked, so the input would go to the lock screen instead of your app. " +
-              "For unattended scheduled work, set the machine to not require a password immediately after display sleep.",
-          );
-        }
-        // Clicking the target IS the action for "click", and focuses it before a key/text action.
-        // Give the focused app a short beat to actually take focus before we type/press — otherwise
-        // the first keystrokes (e.g. an Enter that submits a prompt) can land before the field is
-        // ready and get dropped. This is the robustness gap that made auto-prompt timers flaky.
-        if (typeof a.x === "number" && typeof a.y === "number") {
-          // The click coords are relative to the display the timer was SCHEDULED on — the active
-          // display may have changed since. Temporarily aim the input mapper at that display for
-          // the click (keyboard input doesn't use display geometry, so restore right after). If
-          // that display is gone, fail loudly rather than click the same spot on a wrong screen.
-          const pinnedId = t.displayId;
-          let restoreInput: (() => void) | null = null;
-          if (pinnedId !== undefined && pinnedId !== activeDisplay) {
-            const pinned = displays.find((d) => d.id === pinnedId);
-            if (!pinned || pinned.width <= 0 || pinned.height <= 0) {
-              throw new Error(`the display it was scheduled on ([${pinnedId}]) is no longer connected`);
-            }
-            input.setActiveDisplay({
-              originX: pinned.originX,
-              originY: pinned.originY,
-              width: pinned.width,
-              height: pinned.height,
-            });
-            restoreInput = () => {
-              const cur = displays.find((d) => d.id === activeDisplay);
-              input.setActiveDisplay(
-                cur && cur.width > 0 && cur.height > 0
-                  ? { originX: cur.originX, originY: cur.originY, width: cur.width, height: cur.height }
-                  : null,
-              );
-            };
-          }
-          try {
-            await input.click(a.button ?? "left", false, a.x, a.y);
-          } finally {
-            restoreInput?.();
-          }
-          if (a.kind === "key" || a.kind === "text") await delay(250);
-        }
-        if (a.kind === "key" && a.key) await input.keyTap(a.key);
-        else if (a.kind === "text" && a.text) await input.typeText(a.text, true);
+        await runSteps(actionSteps(a), t.displayId);
       } catch (error) {
         const message = (error as Error).message ?? String(error);
         log.warn("timer action failed:", message);
@@ -354,6 +395,19 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     ensureTimerTicker();
     log.info(`restored ${timers.size} pending timer${timers.size === 1 ? "" : "s"} from disk`);
   }
+
+  // The LashStash: saved multi-step automations, persisted in the state dir (device-specific —
+  // their coordinates are tied to THIS machine's screens, so they never sync to the cloud).
+  // Executing one is just a short timer with a "steps" action, so it reuses the whole timer
+  // pipeline: persistence, countdown broadcast, wake/lock checks, and display pinning.
+  const lashes = new Map<string, Lash>(loadLashes(config.stateDir).map((l) => [l.id, l]));
+  const persistLashes = () => saveLashes(config.stateDir, [...lashes.values()]);
+  const listLashes = (): Lash[] => [...lashes.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  const broadcastLashes = () => {
+    const msg: ServerMessage = { type: "lashes", lashes: listLashes() };
+    for (const c of controllers) c.send(msg);
+  };
+  if (lashes.size > 0) log.info(`loaded ${lashes.size} lash${lashes.size === 1 ? "" : "es"} from disk`);
 
   const captureOnce = async (): Promise<"ok" | "fail" | "idle"> => {
     // The LIVE screen is the direct H.264 capture (encoder.ts); this sampler exists ONLY to feed
@@ -561,9 +615,10 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       const fireInMs = Math.max(1000, Math.min(msg.fireInMs, 7 * 24 * 3600_000)); // 1s .. 7 days
       const fireAtMs = Date.now() + fireInMs;
       // Re-adding the same id just updates its deadline; the shared ticker handles the rest.
-      // Pin the action to the display it was aimed at (the controller schedules against what it
-      // is currently viewing).
-      timers.set(msg.id, { id: msg.id, label: msg.label, fireAtMs, action: msg.action, displayId: activeDisplay });
+      // Pin the action to the display it was aimed at: a lash carries the display it was RECORDED
+      // on; anything else targets what the controller is currently viewing.
+      const displayId = msg.action?.displayId ?? activeDisplay;
+      timers.set(msg.id, { id: msg.id, label: msg.label, fireAtMs, action: msg.action, displayId });
       persistTimers();
       ensureTimerTicker();
       broadcastTimers();
@@ -576,6 +631,23 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     },
     listTimers() {
       return listTimers();
+    },
+    saveLash(raw) {
+      const lash = sanitizeLash(raw);
+      if (!lash) return;
+      if (!lashes.has(lash.id) && lashes.size >= LASH_LIMITS.MAX_LASHES) return; // full — reject new
+      lashes.set(lash.id, lash);
+      persistLashes();
+      broadcastLashes();
+      log.info(`lash "${lash.name}" saved (${lash.steps.length} step${lash.steps.length === 1 ? "" : "s"})`);
+    },
+    removeLash(id) {
+      if (!lashes.delete(id)) return;
+      persistLashes();
+      broadcastLashes();
+    },
+    listLashes() {
+      return listLashes();
     },
     async scanMonitors() {
       const sessions = await monitor.scan();

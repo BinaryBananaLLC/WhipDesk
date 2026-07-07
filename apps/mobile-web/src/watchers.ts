@@ -1,5 +1,6 @@
-import type { AgentKind, MonitorInfo, MonitorSessionInfo, ScheduledAction, TimerInfo, WatchRegion } from "@whipdesk/protocol";
+import type { AgentKind, Lash, MonitorInfo, MonitorSessionInfo, ScheduledAction, TimerInfo, WatchRegion } from "@whipdesk/protocol";
 import type { ControllerTransport } from "./core";
+import type { LashStash } from "./lashstash";
 import type { Notifications } from "./notifications";
 import type { ScreenView } from "./screen";
 import type { Whipository } from "./whipository";
@@ -102,6 +103,7 @@ export class RegionWatchers {
     private readonly notifications: Notifications,
     private readonly requestNotifications: () => void | Promise<void> = () => {},
     private readonly whipository?: Whipository,
+    private readonly lashstash?: LashStash,
   ) {
     this.overlay = el("div", "wd-dialog-overlay hidden");
     this.overlay.addEventListener("pointerdown", (e) => {
@@ -129,7 +131,7 @@ export class RegionWatchers {
     const li1 = el("li");
     li1.append(
       el("strong", undefined, "Scheduled work"),
-      document.createTextNode(" — after a set time: notify you, click a button, or click, type & send a whole prompt (e.g. resume work the moment a session limit resets)."),
+      document.createTextNode(" — after a set time: notify you, click a button, click, type & send a whole prompt, or run a saved multi-step lash from your LashStash (e.g. resume work the moment a session limit resets)."),
     );
     const li2 = el("li");
     li2.append(
@@ -543,19 +545,66 @@ export class RegionWatchers {
 
     const actRow = el("div", "wd-form-row");
     actRow.appendChild(el("label", "wd-form-label", "What to do"));
+    const actPick = el("div", "wd-lash-pickrow");
     const sel = el("select", "wd-input");
     for (const [value, text] of [
       ["none", "Send me a notification"],
       ["click", "Click a button"],
       ["key", "Click to focus & press Enter"],
       ["text", "Click to focus, type & press Enter"],
+      ["lash", "Custom — run a saved lash (multi-step)"],
     ] as const) {
       const o = document.createElement("option");
       o.value = value;
       o.textContent = text;
       sel.appendChild(o);
     }
-    actRow.appendChild(sel);
+    actPick.appendChild(sel);
+
+    // The square LashStash button beside the dropdown: browse/record reusable multi-step
+    // automations ("lashes") and pick one to schedule — no re-placing targets every time.
+    let pickedLash: Lash | null = null;
+    const pickedStatus = el("p", "wd-form-target-status hidden");
+    const syncPicked = () => {
+      pickedStatus.classList.toggle("hidden", sel.value !== "lash");
+      if (sel.value !== "lash") return;
+      if (pickedLash) {
+        const n = pickedLash.steps.length;
+        pickedStatus.textContent = `Lash: “${pickedLash.name}” (${n} step${n === 1 ? "" : "s"})`;
+        pickedStatus.classList.add("set");
+      } else {
+        pickedStatus.textContent = "No lash picked yet — tap the LashStash button.";
+        pickedStatus.classList.remove("set");
+      }
+    };
+    const openStash = () => {
+      overlay.style.display = "none"; // the stash replaces this form until picked/closed
+      this.lashstash!.open({
+        onPick: (lash) => {
+          pickedLash = lash;
+          sel.value = "lash";
+          overlay.style.display = "";
+          syncPicked();
+          syncNext();
+        },
+        // A lash was executed from the stash: drop this form entirely (all dialogs close, the
+        // countdown card takes over). Otherwise just come back to the form.
+        onDone: (executed) => {
+          if (executed) overlay.remove();
+          else overlay.style.display = "";
+        },
+      });
+    };
+    if (this.lashstash) {
+      const stashBtn = el("button", "wd-btn wd-icon-only wd-lash-btn");
+      stashBtn.type = "button";
+      stashBtn.title = "LashStash — your saved automations";
+      stashBtn.setAttribute("aria-label", "Open LashStash");
+      stashBtn.appendChild(icon("zap"));
+      stashBtn.onclick = openStash;
+      actPick.appendChild(stashBtn);
+    }
+    actRow.append(actPick, pickedStatus);
 
     const bar = el("div", "wd-dialog-actions");
     const cancel = el("button", "wd-btn");
@@ -565,9 +614,17 @@ export class RegionWatchers {
     const nextLabel = el("span", "wd-btn-label", "Schedule");
     next.append(icon("clock"), nextLabel);
     const syncNext = () => {
-      nextLabel.textContent = sel.value === "none" ? "Schedule" : "Next: place target";
+      nextLabel.textContent =
+        sel.value === "none" || (sel.value === "lash" && pickedLash)
+          ? "Schedule"
+          : sel.value === "lash"
+            ? "Next: pick a lash"
+            : "Next: place target";
     };
-    sel.onchange = syncNext;
+    sel.onchange = () => {
+      syncPicked();
+      syncNext();
+    };
     syncNext();
 
     const durationMs = (): number | null => {
@@ -581,10 +638,10 @@ export class RegionWatchers {
       const m = Math.max(0, Math.round(Number(mins.value) || 0));
       return `${h ? `${h}h ` : ""}${m}m`;
     };
-    const startTimer = (action: ScheduledAction | undefined) => {
+    const startTimer = (action: ScheduledAction | undefined, defaultLabel?: string) => {
       const id = uid();
       const fireInMs = durationMs()!;
-      const lbl = label.value.trim() || `Scheduled work (${spanText()})`;
+      const lbl = label.value.trim() || defaultLabel || `Scheduled work (${spanText()})`;
       this.conn.send({ type: "timer-add", id, fireInMs, label: lbl, action });
       // Optimistic: show it at once; the authoritative `timers` broadcast reconciles.
       this.timers = [...this.timers, { id, label: lbl, fireAtMs: Date.now() + fireInMs, hasAction: !!action }];
@@ -602,9 +659,19 @@ export class RegionWatchers {
         this.notifications.flash("Set a time", "Choose at least 1 minute.", "warning");
         return;
       }
-      const kind = sel.value as "none" | "click" | "key" | "text";
+      const kind = sel.value as "none" | "click" | "key" | "text" | "lash";
       if (kind === "none") {
         startTimer(undefined);
+        return;
+      }
+      if (kind === "lash") {
+        if (!this.lashstash) return;
+        if (!pickedLash) {
+          openStash(); // pick (or record) one first; scheduling resumes back on this form
+          return;
+        }
+        // Snapshot the steps: later edits/deletes of the saved lash must not change what fires.
+        startTimer({ kind: "steps", steps: pickedLash.steps, displayId: pickedLash.displayId }, pickedLash.name);
         return;
       }
       // Hand off to the live-screen placement mode (and prompt entry, for "text").

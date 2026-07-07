@@ -3,6 +3,7 @@ import { ConnectingOverlay } from "./connecting";
 import { Controls } from "./controls";
 import type { ControllerTransport } from "./core";
 import { InputController } from "./input";
+import { LashStash } from "./lashstash";
 import { Notifications } from "./notifications";
 import { PinPrompt } from "./pinPrompt";
 import { registerPush } from "./push";
@@ -92,7 +93,10 @@ async function start(): Promise<void> {
   // Whipository: reusable saved prompts. Cloud sessions sync to the user's account (one lazy
   // Firestore read/session + debounced writes); LAN keeps them in this browser only.
   const whipository = new Whipository(app!, notifications, remoteConfig);
-  const watchers = new RegionWatchers(app!, conn, view, notifications, requestNotifications, whipository);
+  // LashStash: reusable multi-step automations ("lashes"), stored on the HOST — screen coords are
+  // device-specific, so they live in the agent's state dir, not in the cloud.
+  const lashstash = new LashStash(app!, conn, view, notifications, whipository);
+  const watchers = new RegionWatchers(app!, conn, view, notifications, requestNotifications, whipository, lashstash);
   const controls = new Controls(app!, { conn, view, input, notifications, watchers, whipository });
 
   // Hidden <video> sink for the single WebRTC desktop track. The ScreenView draws from it, so
@@ -280,6 +284,7 @@ async function start(): Promise<void> {
     pinPrompt.hide();
     view.setScreen(w.screen);
     controls.setWelcome(w);
+    lashstash.setActiveDisplay(w.activeDisplay);
     // On the FIRST connect, start at fit (1×) and clear any leftover server-side crop.
     if (firstWelcome) {
       view.setZoom(1);
@@ -318,6 +323,7 @@ async function start(): Promise<void> {
     watchers.setTimers(timers);
     refreshAlertCount();
   });
+  conn.on("lashes", (lashes) => lashstash.setLashes(lashes));
   conn.on("monitors", (monitors) => {
     monitorCount = monitors.length;
     watchers.setMonitors(monitors);
@@ -367,7 +373,10 @@ async function start(): Promise<void> {
   conn.on("netStats", ({ fps, rtt }) => controls.setNetStats(fps, rtt));
   conn.on("screenMeta", ({ screen, activeDisplay }) => {
     view.setScreen(screen);
-    if (activeDisplay !== undefined) controls.setActiveDisplay(activeDisplay);
+    if (activeDisplay !== undefined) {
+      controls.setActiveDisplay(activeDisplay);
+      lashstash.setActiveDisplay(activeDisplay);
+    }
   });
   conn.on("notification", (n) => notifications.show(n));
   conn.on("error", (message) => controls.flashError(message));

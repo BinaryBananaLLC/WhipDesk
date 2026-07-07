@@ -1851,3 +1851,146 @@ textarea {
   text-align: center;
   pointer-events: none;
 }
+
+/* LashStash — saved multi-step automations ("lashes") */
+/* The brand mark slot in the dialog title (SVG placeholder until a raster mark lands). */
+.wd-lash-mark {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  flex: none;
+}
+/* "What to do" dropdown + the square LashStash button on one line. */
+.wd-lash-pickrow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.wd-lash-pickrow .wd-input {
+  flex: 1;
+  min-width: 0;
+}
+.wd-lash-pickrow .wd-lash-btn {
+  flex: none;
+  color: var(--accent);
+}
+/* A lash row: name + one-line step teaser on the left (opens the detail view), actions right. */
+.wd-lash-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.wd-lash-main:active .wd-lash-title {
+  color: var(--accent);
+}
+.wd-lash-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wd-lash-sub {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Numbered step list (detail view + editor). */
+.wd-lash-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+.wd-lash-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.wd-lash-step-num {
+  flex: none;
+  width: 16px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.wd-lash-step-desc {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wd-lash-step .wd-btn {
+  min-width: 32px;
+  min-height: 32px;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+}
+.wd-lash-chips {
+  margin-bottom: 8px;
+}
+.wd-lash-subform {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+/* Floating "Executing “name” in 3…2…1" card — above every dialog, backdrop stays clickable. */
+.wd-exec-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 46;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.wd-exec-card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  padding: 16px 20px;
+  box-shadow: 0 10px 30px var(--shadow);
+  max-width: 86%;
+}
+.wd-exec-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.wd-exec-label svg {
+  flex: none;
+  color: var(--accent);
+}

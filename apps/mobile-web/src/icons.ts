@@ -29,6 +29,8 @@ export type IconName =
   | "insert"
   | "lock"
   | "clock"
+  | "play"
+  | "zap"
   | "power"
   | "activity"
   | "x"
@@ -71,6 +73,9 @@ const PATHS: Record<IconName, string> = {
   insert: '<path d="M12 3v8m-3.5-3.5L12 11l3.5-3.5"/><path d="M5 14v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  play: '<path d="M7 4.5v15l13-7.5Z"/>',
+  // Lightning bolt = LashStash (execute a stored automation). Placeholder until a raster mark lands.
+  zap: '<path d="M13 2 3 14h7l-1 8 11-14h-7l1-6Z"/>',
   power: '<path d="M12 3v9"/><path d="M6.4 7.4a8 8 0 1 0 11.2 0"/>',
   activity: '<path d="M3 12h4l2-7 4 14 2-7h6"/>',
   x: '<path d="M6 6 18 18M18 6 6 18"/>',

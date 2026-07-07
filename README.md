@@ -39,6 +39,10 @@ screen and keystrokes never flow through anyone else's server.
   alert instant.
 - **Full input** — mouse, touch, and keyboard injected into the real OS; built for poking at
   AI agents and CLIs from your couch.
+- **LashStash** — record reusable multi-step automations ("lashes": click → type a prompt →
+  Enter, waits, key presses…), then run one instantly with a 3-second countdown or schedule it
+  for when a session limit resets. Lashes are stored on the host machine (their coordinates are
+  tied to its screens) and survive agent updates.
 - **Job-done notifications** — a token-authenticated webhook (`POST /api/notify`) or an opt-in
   file watcher fires a notification when a slow task completes; optional background push to a
   closed PWA via FCM.

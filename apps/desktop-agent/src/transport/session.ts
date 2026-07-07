@@ -196,6 +196,7 @@ function buildWelcome(ctx: AgentContext): WelcomeMessage {
     activeDisplay: ctx.activeDisplay,
     watchers: ctx.regionWatcher.list(),
     timers: ctx.listTimers(),
+    lashes: ctx.listLashes(),
     monitors: ctx.listMonitors(),
     alwaysAgents: ctx.listAlwaysAgents(),
     notifications: ctx.hub.getRecent(),
@@ -248,6 +249,12 @@ async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Contr
       break;
     case "timer-remove":
       ctx.removeTimer(msg.id);
+      break;
+    case "lash-save":
+      ctx.saveLash(msg.lash);
+      break;
+    case "lash-remove":
+      ctx.removeLash(msg.id);
       break;
     case "monitor-scan":
       await ctx.scanMonitors();
