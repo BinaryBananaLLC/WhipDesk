@@ -252,11 +252,18 @@ export class RemoteConnection {
       if (!kind) return;
       transportReported = true;
       this.core.emit("transport", kind);
-      // One write per connection. Stats are PERSISTENT user data -> Firestore.
+      // One write per connection. Stats are PERSISTENT user data -> Firestore. We bump TWO counters:
+      // the all-time map on the user doc, and a per-month doc (users/{uid}/statsMonthly/{YYYY-MM})
+      // so the dashboard can show "all time" vs "this/last month" without scanning history. Month id
+      // is UTC and MUST match the reader (WWW lib/devices.ts monthId).
       const key = kind === "TURN" ? "turn" : kind === "STUN" ? "stun" : "lan";
+      const now = new Date();
+      const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
       try {
         const { getFirestore, doc, setDoc, increment } = await import("firebase/firestore");
-        void setDoc(doc(getFirestore(app), "users", uid), { stats: { [key]: increment(1) } }, { merge: true }).catch(
+        const fs = getFirestore(app);
+        void setDoc(doc(fs, "users", uid), { stats: { [key]: increment(1) } }, { merge: true }).catch(() => {});
+        void setDoc(doc(fs, "users", uid, "statsMonthly", ym), { [key]: increment(1) }, { merge: true }).catch(
           () => {},
         );
       } catch {
