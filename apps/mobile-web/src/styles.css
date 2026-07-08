@@ -1061,23 +1061,6 @@ textarea {
   font-size: 13px;
   margin: 8px 0 12px;
 }
-.wd-help-intro {
-  margin: 0 0 6px;
-}
-.wd-help-list {
-  margin: 0 0 8px;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.wd-help-list strong {
-  color: var(--text);
-}
-.wd-help-note {
-  margin: 0;
-  font-style: italic;
-}
 /* AI-monitoring fine print: detection is heuristic and can miss sessions — say so, tiny. */
 .wd-mon-caveat {
   margin: 6px 0 0;
@@ -1165,12 +1148,62 @@ textarea {
   flex: 1;
   justify-content: center;
 }
-/* vertical action stack (the three Auto-Whip types) */
-.wd-dialog-actions.wd-actions-stack {
+/* Auto-Whips action rows: each action self-describes (icon + title + one-line description under it),
+   replacing the old explainer block + plain button stack. */
+.wd-action-rows {
+  display: flex;
   flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
 }
-.wd-actions-stack .wd-btn {
+.wd-action-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
   width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.wd-action-row:active {
+  background: var(--panel);
+  transform: translateY(1px);
+}
+/* The leading mark is green like the old "go" buttons so the rows still read as actions. */
+.wd-action-icon {
+  display: grid;
+  place-items: center;
+  color: var(--accent-2);
+}
+.wd-action-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.wd-action-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.wd-action-desc {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.wd-action-chevron {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
 }
 /* Hairline before the LashStash action: it's related to Auto-Whips but doesn't itself arm on-screen
    work, so the rule sets it apart from the "do it now" options above. */
@@ -1822,7 +1855,8 @@ textarea {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  margin-bottom: 12px;
+  /* Sits directly under the dialog header (the old explainer block used to provide this gap). */
+  margin: 12px 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel-2);

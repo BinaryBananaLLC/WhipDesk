@@ -126,86 +126,69 @@ export class RegionWatchers {
     close.onclick = () => this.close();
     head.appendChild(close);
 
-    const help = el("div", "wd-dialog-help");
-    const intro = el("p", "wd-help-intro", "Auto-Whips are a set of features that can whip and monitor agents for you automatically:");
-    const ul = el("ul", "wd-help-list");
-    const li1 = el("li");
-    li1.append(
-      el("strong", undefined, "Scheduled work"),
-      document.createTextNode(" — after a set time: notify you, click a button, click, type & send a whole prompt, or run a saved multi-step lash from your LashStash (e.g. resume work the moment a session limit resets)."),
-    );
-    const li2 = el("li");
-    li2.append(
-      el("strong", undefined, "Alerts"),
-      document.createTextNode(" — watch part of the screen and ping you when it changes visually (e.g. your agent finishes)."),
-    );
-    const li3 = el("li");
-    li3.append(
-      el("strong", undefined, "AI Monitoring"),
-      document.createTextNode(" — pick a running AI session and get pinged the moment the agent stops working (it's waiting on you or has gone idle)."),
-    );
-    const li4 = el("li");
-    li4.append(
-      el("strong", undefined, "LashStash"),
-      document.createTextNode(
-        " — build reusable automations (“lashes”) you can run on demand or from Scheduled work: from simply resuming after a session limit to multi-step click-and-type sequences (handy for test automation and productivity boosts).",
-      ),
-    );
-    ul.append(li1, li2, li3);
-    if (this.lashstash) ul.append(li4);
-    const note = el(
-      "p",
-      "wd-help-note",
-      "Enable browser notifications to be reminded even when the browser is closed.",
-    );
-    help.append(intro, ul, note);
-
     this.permissionRow = el("div", "wd-perm-row");
     this.list = el("div", "wd-watch-list");
 
-    const addSchedule = el("button", "wd-btn wd-go");
-    addSchedule.append(icon("clock"), el("span", "wd-btn-label", "Schedule work"));
-    addSchedule.onclick = () => this.beginSchedule();
+    // Each action self-describes — icon, title, one-line description — so the dialog needs no
+    // separate explainer block, and returning users see their active items right under the header.
+    // Longer copy (examples, caveats) lives in each feature's own sub-dialog.
+    const actionRow = (leading: Node, title: string, desc: string, onClick: () => void): HTMLButtonElement => {
+      const row = el("button", "wd-action-row");
+      const iconWrap = el("span", "wd-action-icon");
+      iconWrap.appendChild(leading);
+      const text = el("span", "wd-action-text");
+      text.append(el("span", "wd-action-title", title), el("span", "wd-action-desc", desc));
+      row.append(iconWrap, text);
+      row.onclick = onClick;
+      return row;
+    };
 
-    const add = el("button", "wd-btn wd-go");
-    add.append(icon("plus"), el("span", "wd-btn-label", "Add alert"));
-    add.onclick = () => this.beginSelection();
-
-    const addMonitor = el("button", "wd-btn wd-go");
-    addMonitor.append(icon("activity"), el("span", "wd-btn-label", "Add AI Monitoring"));
-    addMonitor.onclick = () => this.beginMonitor();
-
-    const actions = el("div", "wd-dialog-actions wd-actions-stack");
-    actions.append(addSchedule, add, addMonitor);
+    const actions = el("div", "wd-action-rows");
+    actions.append(
+      actionRow(icon("clock"), "Schedule work", "After a delay: notify you, click, type a prompt, or run a lash.", () =>
+        this.beginSchedule(),
+      ),
+      actionRow(icon("plus"), "Add alert", "Ping you when part of the screen changes.", () => this.beginSelection()),
+      actionRow(icon("activity"), "Add AI Monitoring", "Ping you when an agent stops or goes idle.", () =>
+        this.beginMonitor(),
+      ),
+    );
 
     // LashStash: create & manage reusable multi-step automations. Opens the LashStash browser/editor
     // on top (closing it returns here). Last option, after AI Monitoring.
     if (this.lashstash) {
       // Divider before LashStash: it's related to Auto-Whips but, unlike the options above, opening
-      // your stash doesn't by itself put automated work on the screen — the rule signals a shift
-      // from "arm something now" to "manage your saved lashes".
+      // your stash doesn't by itself put automated work on the screen — the rule (plus a trailing
+      // chevron instead of the "add an item" look) signals a shift from "arm something now" to
+      // "manage your saved lashes".
       actions.append(el("div", "wd-actions-divider"));
-      const openStash = el("button", "wd-btn wd-go");
       const stashIcon = document.createElement("img");
       stashIcon.src = lashStashIcon;
       stashIcon.alt = "";
       stashIcon.decoding = "async";
       stashIcon.className = "wd-btn-icon-img";
-      openStash.append(stashIcon, el("span", "wd-btn-label", "LashStash"));
-      // Hide this dialog while the stash is open — otherwise it sits underneath and blocks the live
-      // screen during click-step placement. Reopen on close; an Execute countdown takes over instead.
-      openStash.onclick = () => {
-        this.close();
-        this.lashstash!.open({
-          onDone: (executed) => {
-            if (!executed) this.open();
-          },
-        });
-      };
+      const openStash = actionRow(
+        stashIcon,
+        "LashStash",
+        "Reusable click-and-type automations — run now or from Scheduled work.",
+        // Hide this dialog while the stash is open — otherwise it sits underneath and blocks the live
+        // screen during click-step placement. Reopen on close; an Execute countdown takes over instead.
+        () => {
+          this.close();
+          this.lashstash!.open({
+            onDone: (executed) => {
+              if (!executed) this.open();
+            },
+          });
+        },
+      );
+      const chevron = el("span", "wd-action-chevron");
+      chevron.appendChild(icon("chevron-right"));
+      openStash.appendChild(chevron);
       actions.append(openStash);
     }
 
-    card.append(head, help, this.permissionRow, this.list, actions);
+    card.append(head, this.permissionRow, this.list, actions);
     this.overlay.appendChild(card);
     this.root.appendChild(this.overlay);
     this.renderPermission();
@@ -286,7 +269,7 @@ export class RegionWatchers {
   private renderList(): void {
     this.list.replaceChildren();
     if (this.regions.length === 0 && this.timers.length === 0 && this.monitors.length === 0) {
-      this.list.appendChild(el("p", "wd-dialog-help", "No scheduled work, alerts, or AI monitors yet."));
+      this.list.appendChild(el("p", "wd-dialog-help", "Nothing active yet — add something below."));
       return;
     }
     // Same order as the help list + buttons: scheduled work, alerts, AI monitors.
