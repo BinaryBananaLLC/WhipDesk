@@ -6,6 +6,7 @@ import type { Whipository } from "./whipository";
 import { icon } from "./icons";
 import { placeTarget } from "./placement";
 import whipositoryMark from "./assets/whipository.png";
+import lashStashIcon from "./assets/lash-stash-icon.png";
 
 /**
  * The LashStash — the drawer where you keep your pre-recorded "lashes": named, reusable input
@@ -125,8 +126,11 @@ export class LashStash {
 
     const head = el("div", "wd-dialog-head");
     const titleWrap = el("div", "wd-dialog-title");
-    const mark = el("span", "wd-lash-mark");
-    mark.appendChild(icon("zap", 22));
+    const mark = document.createElement("img");
+    mark.src = lashStashIcon;
+    mark.alt = "";
+    mark.decoding = "async";
+    mark.className = "wd-dialog-title-icon";
     titleWrap.append(mark, el("h2", "", "LashStash"));
     const headActions = el("div", "wd-dialog-head-actions");
     const add = el("button", "wd-btn wd-icon-only wd-whips-add");
@@ -572,7 +576,12 @@ export class LashStash {
     const overlay = el("div", "wd-exec-overlay");
     const card = el("div", "wd-exec-card");
     const label = el("div", "wd-exec-label");
-    label.appendChild(icon("zap", 18));
+    const execIcon = document.createElement("img");
+    execIcon.src = lashStashIcon;
+    execIcon.alt = "";
+    execIcon.decoding = "async";
+    execIcon.className = "wd-exec-icon";
+    label.appendChild(execIcon);
     const text = el("span", "", "");
     label.appendChild(text);
     const cancel = el("button", "wd-btn");

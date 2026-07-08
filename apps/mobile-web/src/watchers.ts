@@ -7,7 +7,8 @@ import type { Whipository } from "./whipository";
 import { icon } from "./icons";
 import { placeTarget } from "./placement";
 import { GITHUB_URL } from "./site";
-import whipMark from "./assets/whip.png";
+import autoWhipsIcon from "./assets/auto-whips-icon.png";
+import lashStashIcon from "./assets/lash-stash-icon.png";
 
 let counter = 0;
 function uid(): string {
@@ -111,10 +112,10 @@ export class RegionWatchers {
     });
     const card = el("div", "wd-dialog");
     const head = el("div", "wd-dialog-head");
-    // Whip mark + title, same treatment as the Whipository dialog header.
+    // Auto-Whips mark + title, same treatment as the Whipository dialog header.
     const titleWrap = el("div", "wd-dialog-title");
     const mark = document.createElement("img");
-    mark.src = whipMark;
+    mark.src = autoWhipsIcon;
     mark.alt = "";
     mark.decoding = "async";
     mark.className = "wd-dialog-title-icon";
@@ -180,9 +181,27 @@ export class RegionWatchers {
     // LashStash: create & manage reusable multi-step automations. Opens the LashStash browser/editor
     // on top (closing it returns here). Last option, after AI Monitoring.
     if (this.lashstash) {
+      // Divider before LashStash: it's related to Auto-Whips but, unlike the options above, opening
+      // your stash doesn't by itself put automated work on the screen — the rule signals a shift
+      // from "arm something now" to "manage your saved lashes".
+      actions.append(el("div", "wd-actions-divider"));
       const openStash = el("button", "wd-btn wd-go");
-      openStash.append(icon("zap"), el("span", "wd-btn-label", "LashStash"));
-      openStash.onclick = () => this.lashstash!.open();
+      const stashIcon = document.createElement("img");
+      stashIcon.src = lashStashIcon;
+      stashIcon.alt = "";
+      stashIcon.decoding = "async";
+      stashIcon.className = "wd-btn-icon-img";
+      openStash.append(stashIcon, el("span", "wd-btn-label", "LashStash"));
+      // Hide this dialog while the stash is open — otherwise it sits underneath and blocks the live
+      // screen during click-step placement. Reopen on close; an Execute countdown takes over instead.
+      openStash.onclick = () => {
+        this.close();
+        this.lashstash!.open({
+          onDone: (executed) => {
+            if (!executed) this.open();
+          },
+        });
+      };
       actions.append(openStash);
     }
 
@@ -617,7 +636,12 @@ export class RegionWatchers {
       stashBtn.type = "button";
       stashBtn.title = "LashStash — your saved automations";
       stashBtn.setAttribute("aria-label", "Open LashStash");
-      stashBtn.appendChild(icon("zap"));
+      const stashBtnIcon = document.createElement("img");
+      stashBtnIcon.src = lashStashIcon;
+      stashBtnIcon.alt = "";
+      stashBtnIcon.decoding = "async";
+      stashBtnIcon.className = "wd-btn-icon-img";
+      stashBtn.appendChild(stashBtnIcon);
       stashBtn.onclick = openStash;
       actPick.appendChild(stashBtn);
     }

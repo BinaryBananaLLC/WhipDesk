@@ -7,8 +7,8 @@ import type { RegionWatchers } from "./watchers";
 import type { Whipository } from "./whipository";
 import { icon, type IconName } from "./icons";
 import { DONATE_URL, GITHUB_URL, REDDIT_URL, dashboardUrl } from "./site";
-import whipMark from "./assets/whip.png";
 import whipositoryMark from "./assets/whipository.png";
+import autoWhipsIcon from "./assets/auto-whips-icon.png";
 
 interface Deps {
   conn: ControllerTransport;
@@ -497,12 +497,12 @@ export class Controls {
     this.statusbar = status;
     this.buildConnectionDialog();
 
-    // Auto-Whips button: the project's whip mark, not a notification bell — the dialog is about
+    // Auto-Whips button: the Auto-Whips mark, not a notification bell — the dialog is about
     // putting agents to work automatically (scheduled work, alerts, AI monitoring), not about
     // notification settings.
     const autoWhips = el("button", "wd-bell");
     const whipImg = document.createElement("img");
-    whipImg.src = whipMark;
+    whipImg.src = autoWhipsIcon;
     whipImg.alt = "";
     whipImg.decoding = "async";
     whipImg.className = "wd-whip-mark";
