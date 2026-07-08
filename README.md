@@ -122,6 +122,10 @@ The npm package is published with [npm provenance](https://docs.npmjs.com/genera
 Prebuilt agents keep their pairing/PIN state in `~/.whipdesk`, so updates don't re-pair you.
 **Always verify a download before running it** — see [docs/VERIFYING-DOWNLOADS.md](docs/VERIFYING-DOWNLOADS.md).
 
+WhipDesk tells you (in the running agent, on your connected phone, and on the dashboard) when a new
+version ships — it never auto-updates. See **[docs/UPDATING.md](docs/UPDATING.md)** for the one-line
+update command per install method and how the notifications work.
+
 ## Setup & permissions (troubleshooting)
 
 The agent prints a short reminder for your OS at startup. If the screen shows only your wallpaper,

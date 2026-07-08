@@ -277,34 +277,83 @@ export class LashStash {
       name.value = draft.name;
       nameRow.appendChild(name);
 
+      // Declared here (not in the palette section below) so the insert-hint can scroll it into view.
+      const chips = el("div", "wd-preset-row wd-lash-chips");
+
+      // insertAt = where the NEXT added step(s) land. null = append to the end (the default). A step
+      // row's "insert" button arms a ONE-SHOT mid-list insert, so a forgotten Wait can drop between
+      // two clicks without rebuilding the whole lash.
+      let insertAt: number | null = null;
+      const stepsLabel = el("label", "wd-form-label", "Steps");
+
+      const insertHint = el("div", "wd-lash-insert-hint hidden");
+      const insertHintText = el("span", "wd-lash-insert-text", "");
+      const insertHintCancel = el("button", "wd-btn wd-icon-only wd-lash-insert-x");
+      insertHintCancel.appendChild(icon("x", 15));
+      insertHintCancel.setAttribute("aria-label", "Cancel inserting — add to the end instead");
+      insertHintCancel.title = "Add to the end instead";
+      insertHint.append(insertHintText, insertHintCancel);
+      const setInsertAt = (at: number | null) => {
+        insertAt = at;
+        insertHint.classList.toggle("hidden", at === null);
+        if (at !== null) {
+          insertHintText.textContent =
+            at >= draft.steps.length ? "Adding to the end" : `Inserting before step ${at + 1}`;
+          // Bring the palette into view so the next tap obviously lands the step at this spot.
+          chips.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      };
+      insertHintCancel.onclick = () => setInsertAt(null);
+
       const stepsWrap = el("div", "wd-lash-steps");
-      const renderSteps = () => {
+      const renderSteps = (flash?: { at: number; count: number }) => {
+        stepsLabel.textContent = draft.steps.length ? `Steps (${draft.steps.length})` : "Steps";
         stepsWrap.replaceChildren();
         if (draft.steps.length === 0) {
-          stepsWrap.appendChild(el("p", "wd-dialog-help", "No steps yet — add them below."));
+          stepsWrap.appendChild(el("p", "wd-dialog-help", "No steps yet — add your first step below."));
           return;
         }
         draft.steps.forEach((s, i) => {
           const row = el("div", "wd-lash-step");
-          row.append(el("span", "wd-lash-step-num", String(i + 1)), el("span", "wd-lash-step-desc", describeStep(s, draft.screen)));
-          if (i > 0) {
-            const up = el("button", "wd-btn wd-icon-only");
-            up.appendChild(icon("chevron-up", 16));
-            up.setAttribute("aria-label", "Move step up");
-            up.onclick = () => {
-              [draft.steps[i - 1], draft.steps[i]] = [draft.steps[i]!, draft.steps[i - 1]!];
-              renderSteps();
-            };
-            row.appendChild(up);
-          }
+          // Brief highlight so a just-added/inserted step visibly "lands" in the list (the palette
+          // sits below, so without this an add could look like nothing happened).
+          if (flash && i >= flash.at && i < flash.at + flash.count) row.classList.add("wd-lash-step-new");
+          row.append(
+            el("span", "wd-lash-step-num", String(i + 1)),
+            el("span", "wd-lash-step-desc", describeStep(s, draft.screen)),
+          );
+          const ctl = el("div", "wd-lash-step-ctl");
+          const ins = el("button", "wd-btn wd-icon-only");
+          ins.appendChild(icon("plus", 16));
+          ins.setAttribute("aria-label", `Insert a step after step ${i + 1}`);
+          ins.title = "Insert a step after this one";
+          ins.onclick = () => setInsertAt(i + 1);
+          const up = el("button", "wd-btn wd-icon-only");
+          up.appendChild(icon("chevron-up", 16));
+          up.setAttribute("aria-label", "Move step up");
+          up.disabled = i === 0;
+          up.onclick = () => {
+            [draft.steps[i - 1], draft.steps[i]] = [draft.steps[i]!, draft.steps[i - 1]!];
+            renderSteps();
+          };
+          const down = el("button", "wd-btn wd-icon-only");
+          down.appendChild(icon("chevron-down", 16));
+          down.setAttribute("aria-label", "Move step down");
+          down.disabled = i === draft.steps.length - 1;
+          down.onclick = () => {
+            [draft.steps[i + 1], draft.steps[i]] = [draft.steps[i]!, draft.steps[i + 1]!];
+            renderSteps();
+          };
           const del = el("button", "wd-btn wd-icon-only");
           del.appendChild(icon("trash", 16));
           del.setAttribute("aria-label", "Remove step");
           del.onclick = () => {
             draft.steps.splice(i, 1);
+            if (insertAt !== null && insertAt > draft.steps.length) setInsertAt(draft.steps.length);
             renderSteps();
           };
-          row.appendChild(del);
+          ctl.append(ins, up, down, del);
+          row.appendChild(ctl);
         });
       };
       renderSteps();
@@ -318,8 +367,15 @@ export class LashStash {
           this.notifications.flash("Too many steps", `A lash can hold up to ${LASH_LIMITS.MAX_STEPS} steps.`, "warning");
           return;
         }
-        draft.steps.push(...steps);
-        renderSteps();
+        const at = insertAt ?? draft.steps.length;
+        draft.steps.splice(at, 0, ...steps);
+        setInsertAt(null); // one-shot: fall back to appending after each add
+        renderSteps({ at, count: steps.length });
+        // Scroll the freshly added step into view so it's obvious something happened.
+        window.setTimeout(
+          () => stepsWrap.querySelector(".wd-lash-step-new")?.scrollIntoView({ behavior: "smooth", block: "nearest" }),
+          30,
+        );
       };
 
       // Click steps are recorded on the live screen (pan/zoom + crosshair, like timer targets).
@@ -343,8 +399,8 @@ export class LashStash {
       };
 
       // Step palette: the same rungs as "What to do" (click / click+Enter / click+type+Enter)
-      // plus the raw building blocks for fully custom sequences.
-      const chips = el("div", "wd-preset-row wd-lash-chips");
+      // plus the raw building blocks for fully custom sequences. (`chips` is declared above so the
+      // insert-hint can scroll it into view.)
       const chip = (label: string, onTap: () => void) => {
         const b = el("button", "wd-preset", label);
         b.type = "button";
@@ -453,7 +509,7 @@ export class LashStash {
       cancel.append(el("span", "wd-btn-label", "Cancel"));
       cancel.onclick = renderList;
       const save = el("button", "wd-btn wd-go");
-      save.append(el("span", "wd-btn-label", existing ? "Save" : "Add lash"));
+      save.append(el("span", "wd-btn-label", existing ? "Save" : "Create"));
       save.onclick = () => {
         if (draft.steps.length === 0) {
           this.notifications.flash("No steps", "Add at least one step first.", "warning");
@@ -476,7 +532,9 @@ export class LashStash {
       };
       bar.append(cancel, save);
 
-      body.append(nameRow, el("label", "wd-form-label", "Steps"), stepsWrap, chips, subform, bar);
+      // Step list at the TOP (right under the name) so it's the focus and visibly grows as you add;
+      // the "Add a step" palette + its inline sub-form sit below it.
+      body.append(nameRow, stepsLabel, stepsWrap, insertHint, el("label", "wd-form-label", "Add a step"), chips, subform, bar);
     };
 
     add.onclick = () => renderEditor(null);

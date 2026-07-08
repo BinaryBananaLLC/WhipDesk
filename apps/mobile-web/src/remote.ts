@@ -24,6 +24,17 @@ const EDGE_WS_PROTOCOL = "whipdesk.v1";
 // list via fetchIceServers; this is used only if that fetch fails.
 const STUN = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
 
+/**
+ * Month bucket id for the per-month stats doc — "YYYY-MM" in UTC. Built the SAME way as the reader
+ * (WWW src/lib/devices.ts `monthId`): normalize to the 1st of the UTC month, then take the ISO
+ * year-month. Going through Date.UTC (rather than a hand-rolled `getUTCMonth()+1`) means no
+ * off-by-one and no year-rollover bugs, and UTC (not local time) guarantees a device and its
+ * dashboard address the identical doc regardless of timezone. Keep this in lockstep with the reader.
+ */
+export function monthKeyUTC(d = new Date()): string {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0, 7);
+}
+
 /** Read the selected ICE route from getStats: TURN (relay), STUN (srflx), or LAN (host). */
 async function detectTransport(pc: RTCPeerConnection): Promise<"TURN" | "STUN" | "LAN" | null> {
   try {
@@ -264,11 +275,10 @@ export class RemoteConnection {
       this.core.emit("transport", kind);
       // One write per connection. Stats are PERSISTENT user data -> Firestore. We bump TWO counters:
       // the all-time map on the user doc, and a per-month doc (users/{uid}/statsMonthly/{YYYY-MM})
-      // so the dashboard can show "all time" vs "this/last month" without scanning history. Month id
-      // is UTC, taken straight off the ISO string (no hand-rolled month math — getUTCMonth() is
-      // 0-based and off-by-one bugs love it), and MUST match the reader (WWW lib/devices.ts monthId).
+      // so the dashboard can show "all time" vs "this/last month" without scanning history. The month
+      // id comes from monthKeyUTC() — the exact construction the reader uses (WWW lib/devices.ts).
       const key = kind === "TURN" ? "turn" : kind === "STUN" ? "stun" : "lan";
-      const ym = new Date().toISOString().slice(0, 7);
+      const ym = monthKeyUTC();
       try {
         const { getFirestore, doc, setDoc, increment } = await import("firebase/firestore");
         const fs = getFirestore(app);

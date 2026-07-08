@@ -6,6 +6,7 @@ import { InputController } from "./input";
 import { LashStash } from "./lashstash";
 import { Notifications } from "./notifications";
 import { PinPrompt } from "./pinPrompt";
+import { ResumePrompt } from "./resumePrompt";
 import { registerPush } from "./push";
 import { RemoteConnection, type FirebaseWebConfig } from "./remote";
 import { ScreenView } from "./screen";
@@ -63,6 +64,9 @@ const pinPrompt = new PinPrompt(app);
 // The dashboard escape hatch only makes sense when the user CAME from the dashboard (cloud
 // remote session); a LAN controller has no machine list to go back to.
 const connecting = new ConnectingOverlay(app, { dashboardEscape: remote && !!device });
+// Resume gate (remote only): shown before a reconnect when the user returns to a backgrounded or
+// reloaded tab, so we never spend a TURN allocation + PIN prompt before they ask for it.
+const resumePrompt = new ResumePrompt(app, { dashboardEscape: remote && !!device });
 
 async function makeTransport(remoteConfig: FirebaseWebConfig | null): Promise<ControllerTransport> {
   if (remote && device) {
@@ -124,6 +128,25 @@ async function start(): Promise<void> {
   // True while a foreground-resume reconnect is in flight, so the status handler shows the
   // "Reconnecting…" overlay for it (ordinary mid-session blips stay silent to avoid flicker).
   let resuming = false;
+  // This tab has completed at least one connection. Persisted in sessionStorage (survives a
+  // reload/discard but NOT a brand-new tab), and combined with a reload/back_forward navigation
+  // type at startup so ONLY a genuine return to a controller gates the reconnect — never a fresh
+  // "tap Connect" navigation (which is a new session).
+  const RECONNECT_MARKER = "wd-connected-before";
+  const markConnected = () => {
+    try {
+      sessionStorage.setItem(RECONNECT_MARKER, "1");
+    } catch {
+      /* storage blocked (private mode) — no gate on reload, which is safe */
+    }
+  };
+  const hasConnectedBefore = () => {
+    try {
+      return sessionStorage.getItem(RECONNECT_MARKER) === "1";
+    } catch {
+      return false;
+    }
+  };
   // Last region we asked the host to crop to (null = none sent yet / full). Compared RELATIVE to its
   // own size so a pan is re-cropped whenever it moves meaningfully for the current zoom.
   let lastSent: { x: number; y: number; w: number; h: number } | null = null;
@@ -280,8 +303,10 @@ async function start(): Promise<void> {
   conn.on("welcome", (w) => {
     const firstWelcome = !welcomed;
     welcomed = true;
+    markConnected();
     connecting.hide();
     pinPrompt.hide();
+    resumePrompt.hide();
     view.setScreen(w.screen);
     controls.setWelcome(w);
     lashstash.setActiveDisplay(w.activeDisplay);
@@ -393,11 +418,12 @@ async function start(): Promise<void> {
     });
   }
 
-  // Pause host capture while hidden (battery), and — crucially on mobile — proactively rebuild the
-  // WebRTC link when we return. A backgrounded tab gets its peer connection frozen or killed, often
-  // with no state-change event firing, so waiting on the passive reconnect backoff can leave the
-  // screen stuck on a dead frame (the "had to go back to the dashboard and come back" case). The
-  // extra `pageshow` covers bfcache restores that skip visibilitychange.
+  // Pause host capture while hidden (battery), and proactively rebuild the WebRTC link when we
+  // return — a backgrounded mobile tab often has its peer connection frozen/killed with no event.
+  // This is SEAMLESS by design: the PIN is remembered in memory across a background/bfcache resume,
+  // so re-auth is silent (no PIN, no prompt). The resume PROMPT is NOT used here — it's only for a
+  // full reload/discard, where JS memory (and the remembered PIN) is gone, handled once at startup
+  // below. `pageshow` also covers bfcache restores that skip visibilitychange.
   const resumeIfNeeded = () => {
     if (document.hidden || conn.isHealthy()) return;
     resuming = true;
@@ -425,7 +451,20 @@ async function start(): Promise<void> {
   if (!token) {
     controls.flashError("No pairing token in the URL (#t=…). Re-open the link/QR from the agent.");
   }
-  conn.connect();
+  // Show the resume prompt ONLY when the user RETURNS to a controller they were already on — a
+  // reload, a tab Android Chrome discarded + reloaded, or a Back navigation — where JS memory (and
+  // the remembered PIN) is gone, so a full reconnect + PIN is guaranteed. A FRESH navigation here
+  // (e.g. tapping Connect on the dashboard) is a brand-new session and must NEVER be gated, even if
+  // this tab connected to something earlier. navigation.type: "navigate" = fresh; "reload"/
+  // "back_forward" = a return. (A bfcache Back doesn't re-run this script — it resumes seamlessly
+  // via pageshow above, keeping its in-memory PIN.)
+  const navEntry = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+  const returning = navEntry?.type === "reload" || navEntry?.type === "back_forward";
+  if (remote && device && returning && hasConnectedBefore()) {
+    resumePrompt.show(() => conn.connect());
+  } else {
+    conn.connect();
+  }
 }
 
 void start();

@@ -471,24 +471,23 @@ textarea {
 .wd-fullscreen {
   display: none;
 }
-/* Hide-the-whole-ribbon toggle: only on a touch device in landscape, where vertical space is
-   scarcest. Sits to the right of the collapse chevron. */
+/* Hide-the-whole-ribbon toggle: revealed on touch devices only while a tab is collapsed (see the
+   shared coarse rule below), where it REPLACES the pane chevron so the whole menu can fold away. */
 .wd-hide-ribbon {
   display: none;
 }
 @media (pointer: coarse) and (orientation: landscape) {
+  /* Landscape is the only place the fullscreen toggle earns its spot (the browser chrome eats the
+     scarce vertical space there). The collapse/hide-ribbon swap is shared with portrait, below. */
   .wd-fullscreen {
     display: grid;
   }
-  .wd-hide-ribbon {
-    display: grid;
-  }
 }
-/* Portrait phones: no room for a third button, so the hide-ribbon toggle appears only once the
-   pane is collapsed — and REPLACES the pane chevron. Collapse a tab → ">" offers to fold the whole
-   menu away; expand a tab again → the pane chevron returns and ">" hides. Landscape and desktop
-   keep their existing layout (both buttons in landscape, neither extra on desktop). */
-@media (pointer: coarse) and (orientation: portrait) {
+/* Touch devices, BOTH orientations: collapsing a tab hides the pane chevron and reveals the ">"
+   hide-ribbon button in its place, so the whole menu folds away to the corner handle. Expanding a
+   tab again (tap a menu item) brings the pane chevron back and hides ">". Landscape additionally
+   keeps the fullscreen button (above); desktop shows neither extra. */
+@media (pointer: coarse) {
   .wd-ribbon.collapsed .wd-collapse-pane {
     display: none;
   }
@@ -903,6 +902,63 @@ textarea {
   color: var(--text);
 }
 
+/* "you were away" resume gate (remote only) — same modal treatment as the PIN dialog. */
+.wd-resume {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 9, 14, 0.92);
+  backdrop-filter: blur(6px);
+  padding: 20px;
+}
+.wd-resume-card {
+  width: 100%;
+  max-width: 340px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 26px 24px;
+  text-align: center;
+}
+.wd-resume-whip {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 12px;
+}
+.wd-resume-card h2 {
+  margin: 0 0 8px;
+  font-size: 21px;
+}
+.wd-resume-msg {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.wd-resume-go {
+  width: 100%;
+  min-height: 50px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.wd-resume-go:active {
+  filter: brightness(0.92);
+  transform: translateY(1px);
+}
+.wd-resume-back {
+  margin-top: 14px;
+}
+
 /* "connecting…" overlay (first connect only) */
 .wd-connecting {
   position: absolute;
@@ -967,6 +1023,10 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 16px;
+  /* Tall dialogs (e.g. the LashStash editor: step list + palette + actions) must never run off the
+     top/bottom of the screen where their buttons become unreachable — cap and scroll instead. */
+  max-height: 90vh;
+  overflow-y: auto;
 }
 .wd-dialog-head {
   display: flex;
@@ -1943,11 +2003,62 @@ textarea {
   white-space: nowrap;
 }
 .wd-lash-step .wd-btn {
-  min-width: 32px;
-  min-height: 32px;
-  width: 32px;
-  height: 32px;
-  padding: 4px;
+  min-width: 30px;
+  min-height: 30px;
+  width: 30px;
+  height: 30px;
+  padding: 3px;
+}
+.wd-lash-step .wd-btn:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+/* Per-row controls: insert-after / move up / move down / delete, kept on one line (the description
+   ellipsizes) so reordering and mid-list inserts are one tap each. */
+.wd-lash-step-ctl {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* Brief accent flash so a newly added or inserted step visibly "lands" in the list. */
+@keyframes wd-lash-pop {
+  0% {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  100% {
+    background: var(--panel-2);
+    border-color: var(--border);
+  }
+}
+.wd-lash-step-new {
+  animation: wd-lash-pop 0.9s ease-out;
+}
+/* "Inserting before step N" banner — shown only while a mid-list insert position is armed. */
+.wd-lash-insert-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 5px 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel-2);
+  margin-bottom: 8px;
+}
+.wd-lash-insert-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+.wd-lash-insert-x {
+  min-width: 30px;
+  min-height: 30px;
+  width: 30px;
+  height: 30px;
+  padding: 3px;
 }
 .wd-lash-chips {
   margin-bottom: 8px;

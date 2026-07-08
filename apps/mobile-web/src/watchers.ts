@@ -143,7 +143,15 @@ export class RegionWatchers {
       el("strong", undefined, "AI Monitoring"),
       document.createTextNode(" — pick a running AI session and get pinged the moment the agent stops working (it's waiting on you or has gone idle)."),
     );
+    const li4 = el("li");
+    li4.append(
+      el("strong", undefined, "LashStash"),
+      document.createTextNode(
+        " — build reusable automations (“lashes”) you can run on demand or from Scheduled work: from simply resuming after a session limit to multi-step click-and-type sequences (handy for test automation and productivity boosts).",
+      ),
+    );
     ul.append(li1, li2, li3);
+    if (this.lashstash) ul.append(li4);
     const note = el(
       "p",
       "wd-help-note",
@@ -168,6 +176,15 @@ export class RegionWatchers {
 
     const actions = el("div", "wd-dialog-actions wd-actions-stack");
     actions.append(addSchedule, add, addMonitor);
+
+    // LashStash: create & manage reusable multi-step automations. Opens the LashStash browser/editor
+    // on top (closing it returns here). Last option, after AI Monitoring.
+    if (this.lashstash) {
+      const openStash = el("button", "wd-btn wd-go");
+      openStash.append(icon("zap"), el("span", "wd-btn-label", "LashStash"));
+      openStash.onclick = () => this.lashstash!.open();
+      actions.append(openStash);
+    }
 
     card.append(head, help, this.permissionRow, this.list, actions);
     this.overlay.appendChild(card);

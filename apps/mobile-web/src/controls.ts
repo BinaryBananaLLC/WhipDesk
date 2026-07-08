@@ -556,10 +556,10 @@ export class Controls {
     this.collapseBtn.onclick = () => this.setCollapsed(!this.collapsed);
     tabs.appendChild(this.collapseBtn);
 
-    // Hide-the-whole-ribbon toggle — CSS shows it on a touch device in landscape (like the
-    // fullscreen button), and in portrait only while the pane is collapsed, where it REPLACES the
-    // pane chevron so the whole menu can be folded away on phones too. ">" folds the entire ribbon
-    // away to a slim handle on the right edge; "<" brings it back. Frees the full screen height.
+    // Hide-the-whole-ribbon toggle — on touch devices it appears once the pane is collapsed (in
+    // BOTH orientations now) and REPLACES the pane chevron, so the whole menu can be folded away to
+    // the corner handle. ">" folds the entire ribbon away to a slim handle on the right edge; "<"
+    // brings it back. Landscape also keeps the fullscreen button; desktop shows neither extra.
     this.hideRibbonBtn = iconBtn("chevron-right", "", "wd-collapse wd-hide-ribbon");
     this.hideRibbonBtn.setAttribute("aria-label", "Hide the whole ribbon");
     this.hideRibbonBtn.title = "Hide toolbar";
