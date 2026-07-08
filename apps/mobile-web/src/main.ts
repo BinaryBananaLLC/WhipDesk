@@ -432,7 +432,14 @@ async function start(): Promise<void> {
   };
   document.addEventListener("visibilitychange", () => {
     conn.setVisible(!document.hidden);
-    if (!document.hidden) resumeIfNeeded();
+    if (!document.hidden) {
+      resumeIfNeeded();
+      // A backgrounded tab has its <video> sinks auto-paused by the browser; when the link stayed
+      // healthy (so no rebuild/new-track fires) they'd otherwise stay frozen on the last frame even
+      // as fresh RTP arrives. Nudge them back to playing on every foreground.
+      void videoEl.play().catch(() => {});
+      void overviewEl.play().catch(() => {});
+    }
   });
   window.addEventListener("pageshow", resumeIfNeeded);
   // Real unload (refresh/navigate-away, not a bfcache freeze): close the session gracefully so the

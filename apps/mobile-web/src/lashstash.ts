@@ -358,6 +358,7 @@ export class LashStash {
           };
           ctl.append(ins, up, down, del);
           row.appendChild(ctl);
+          stepsWrap.appendChild(row);
         });
       };
       renderSteps();
