@@ -42,6 +42,14 @@ jobs:
         shell: bash
         run: |
           TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          # Require the leading "v". Every install path — install.sh/install.ps1, the Homebrew cask,
+          # and the Scoop manifest — builds its download URL as .../download/v<version>/... A bare tag
+          # like "0.2.0" 404s everywhere (this is exactly what broke the 0.2.0 release). Reject it here,
+          # before five platform builds, instead of shipping a release nobody can install.
+          case "$TAG" in
+            v*) ;;
+            *) echo "::error::Tag '$TAG' must start with 'v' (e.g. v0.2.1). All installers build .../download/v<version>/... URLs, so a bare tag 404s everywhere."; exit 1 ;;
+          esac
           VER="${TAG#v}"
           # Fail fast on a malformed tag (e.g. "v.0.0.3" -> ".0.0.3") instead of a cryptic
           # `npm error Invalid version` deep in the build. Tags must be vMAJOR.MINOR.PATCH[-suffix].
@@ -458,7 +466,7 @@ jobs:
             desc "Remote desktop and AI-agent status alerts, controlled from a mobile browser"
             homepage "https://whipdesk.com/"
 
-            depends_on macos: ">= :monterey"
+            depends_on macos: :monterey
 
             pkg "whipdesk-#{version}-macos-#{arch}.pkg"
 

@@ -105,8 +105,8 @@ whipdesk
 | OS | Asset | Notes |
 | --- | --- | --- |
 | macOS | `whipdesk-<ver>-macos-arm64.pkg` / `-x64.pkg` | Signed with a Developer ID & **notarized** — installs `whipdesk` to your PATH. |
-| Windows | `whipdesk-<ver>-windows-x64-setup.exe` | Signed setup wizard — installs per-user, no admin needed. |
-| Windows | `whipdesk-<ver>-windows-x64.zip` | Portable: unzip and run `whipdesk.exe` (also available via `winget install BinaryBanana.WhipDesk` or Scoop). |
+| Windows | `whipdesk-<ver>-windows-x64-setup.exe` | Setup wizard — installs per-user, no admin needed. |
+| Windows | `whipdesk-<ver>-windows-x64.zip` | Portable: unzip and run `whipdesk.exe` (also available via Scoop). |
 | Linux | `whipdesk-<ver>-linux-x64.tar.gz` | Extract and run `./whipdesk` (needs X11). |
 
 **npm (if you already have Node ≥ 20):**

@@ -52,7 +52,9 @@ if [[ -z "$VERSION" ]]; then
   say "Resolving latest release"
   final_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")"
   VERSION="${final_url##*/}"
-  [[ "$VERSION" == v* ]] || fail "could not resolve the latest version (got '$VERSION')"
+  # Accept both v-prefixed (v0.2.0) and bare (0.2.0) release tags — the download path uses the tag
+  # verbatim ($BASE) and asset names use the v-stripped number ($VER), so either resolves correctly.
+  [[ "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+ ]] || fail "could not resolve the latest version (got '$VERSION')"
 fi
 VER="${VERSION#v}"
 BASE="https://github.com/${REPO}/releases/download/${VERSION}"

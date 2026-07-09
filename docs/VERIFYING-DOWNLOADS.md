@@ -43,10 +43,9 @@ spctl -a -vvv -t install whipdesk-<ver>-macos-arm64.pkg   # should say "accepted
 xcrun stapler validate whipdesk-<ver>-macos-arm64.pkg
 ```
 
-**Windows** — releases are Authenticode-signed via [SignPath](https://signpath.io) (free for OSS): both
-the `whipdesk.exe` inside the zip and the `whipdesk-<ver>-windows-x64-setup.exe` wizard. Check the
-signature in Explorer → Properties → Digital Signatures. If a release predates signing (or SmartScreen
-still warns), use **More info → Run anyway** only *after* the provenance/checksum checks above pass.
+**Windows** — verify the download by its SHA-256 against `SHA256SUMS.txt` (and the SLSA provenance
+above) before running. WhipDesk's Windows builds are not yet code-signed, so SmartScreen will warn;
+use **More info → Run anyway** only *after* the provenance/checksum checks above pass.
 
 **Linux** — no OS signature layer; rely on the provenance + checksum checks.
 

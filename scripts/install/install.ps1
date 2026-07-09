@@ -7,10 +7,10 @@ WhipDesk installer for Windows. Served at https://whipdesk.com/install.ps1
   powershell -c "& ([scriptblock]::Create((irm https://whipdesk.com/install.ps1))) -Interactive"
 
 What it does (and nothing else):
-  default      — downloads the SignPath-signed release zip from GitHub Releases, verifies its
+  default      — downloads the release zip from GitHub Releases, verifies its
                  SHA-256 against the release's SHA256SUMS.txt, extracts to
                  %LOCALAPPDATA%\Programs\WhipDesk, and adds that folder to your user PATH.
-  -Interactive — downloads the signed Setup wizard (whipdesk-<ver>-windows-x64-setup.exe),
+  -Interactive — downloads the Setup wizard (whipdesk-<ver>-windows-x64-setup.exe),
                  verifies it, and launches it instead.
 
 No admin rights required. Artifacts are built by GitHub Actions from the tagged source with
@@ -36,7 +36,9 @@ if (-not $Version) {
   $resp.AllowAutoRedirect = $false
   $location = $resp.GetResponse().Headers["Location"]
   $Version = ($location -split "/")[-1]
-  if (-not $Version.StartsWith("v")) { Fail "could not resolve the latest version (got '$Version')" }
+  # Accept both v-prefixed (v0.2.0) and bare (0.2.0) release tags — $Base uses the tag verbatim and
+  # $Ver is the v-stripped number for asset names, so either form resolves correctly.
+  if ($Version -notmatch '^v?\d+\.\d+\.\d+') { Fail "could not resolve the latest version (got '$Version')" }
 }
 $Ver = $Version.TrimStart("v")
 $Base = "https://github.com/$Repo/releases/download/$Version"
