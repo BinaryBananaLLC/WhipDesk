@@ -35,7 +35,15 @@ Node ≥ 20. macOS, Windows, and Linux are all first-class; CI runs the suite on
   never a public issue. See [SECURITY.md](SECURITY.md).
 - Ideas and questions → [r/WhipDesk](https://www.reddit.com/r/WhipDesk/) or a GitHub discussion/issue.
 
-## License
+## License and the CLA
 
-WhipDesk is [AGPL-3.0](LICENSE); by contributing you agree your contribution is licensed the
-same way.
+WhipDesk is [AGPL-3.0](LICENSE). Alongside the AGPL, BinaryBanana LLC offers commercial
+licenses — that's part of how the project might be funded one day — so we ask every contributor to accept a short Contributor License Agreement (CLA) with their first pull request. You keep the copyright
+to your contribution; the CLA grants BinaryBanana LLC the right to also license it under those
+commercial terms. It's a one-time step, and your contribution stays available to everyone under
+the AGPL exactly like the rest of the code.
+
+The full text is in [CLA.md](CLA.md) — it's a page, written to be read. On your first PR the CLA
+bot posts instructions; signing is replying with one comment on the PR, and the signature is
+recorded openly on the [`cla-signatures`](https://github.com/BinaryBananaLLC/WhipDesk/tree/cla-signatures)
+branch.

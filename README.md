@@ -262,6 +262,12 @@ Disable it entirely with `.whipdesk/settings.json`:
 modified version as a network service, the AGPL requires you to publish your source under the
 same license. For commercial licensing, contact BinaryBanana LLC.
 
+Everything that runs on your machine is in this repo, open source; the hosted
+[whipdesk.com](https://whipdesk.com) connectivity service (remote handshake, relays, device
+dashboard) is what might fund its development. The WhipDesk name and logo are trademarks of
+BinaryBanana LLC and aren't covered by the code license — forks need their own branding
+(see [TRADEMARK.md](TRADEMARK.md)).
+
 ## Star History
 
 <a href="https://star-history.com/#BinaryBananaLLC/WhipDesk&Date">
