@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { DEFAULTS, LASH_LIMITS, type AgentKind, type Lash, type LashStep, type MonitorAddMessage, type MonitorInfo, type ScheduledAction, type ScreenInfo, type ServerMessage, type TimerAddMessage, type TimerInfo, type WatchRegion } from "@whipdesk/protocol";
@@ -753,9 +753,18 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   });
 
   if (existsSync(webDist)) {
-    app.use(express.static(webDist));
+    // Explicit Cache-Control: without it browsers heuristically cache index.html, so a rebuilt
+    // controller kept serving the OLD hashed bundles until a hard refresh. Vite's /assets/* are content-hashed → cache forever; everything else (the
+    // HTML shell, manifest, push service worker) must revalidate — cheap 304s via ETag.
+    const setCacheHeaders = (res: express.Response, filePath: string): void => {
+      const immutable = filePath.includes(`${sep}assets${sep}`);
+      res.setHeader("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "no-cache");
+    };
+    app.use(express.static(webDist, { setHeaders: setCacheHeaders }));
     // Express 5: bare "*" is no longer a valid route path — wildcards must be named.
-    app.get("/*splat", (_req, res) => res.sendFile(join(webDist, "index.html")));
+    app.get("/*splat", (_req, res) =>
+      res.sendFile(join(webDist, "index.html"), { headers: { "Cache-Control": "no-cache" } }),
+    );
   } else {
     log.warn(`mobile-web build not found at ${webDist} — run "npm run build:web"`);
     app.get("/", (_req, res) =>
