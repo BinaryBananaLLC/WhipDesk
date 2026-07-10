@@ -20,6 +20,14 @@ export interface FirebaseWebConfig {
 const DEFAULT_EDGE_URL = "https://edge.whipdesk.com";
 const EDGE_WS_PROTOCOL = "whipdesk.v1";
 
+// HTTPS signaling fallback: on lossy mobile links (mountains-grade 3G) carrier middleboxes kill
+// the WS UPGRADE while plain fetch() still works (HTTP/3, per-request retries). If the signaling
+// socket can't open within this window, the SAME handshake continues over POST /v1/signal + a
+// polled GET — slow but alive, which is the whole "work from anywhere" promise.
+const WS_SIGNAL_TIMEOUT_MS = 4_000;
+const HTTP_SIGNAL_POLL_MS = 1_500;
+const HTTP_SIGNAL_TTL_MS = 2 * 60_000; // matches the hub's pending-session TTL
+
 // Public STUN fallback (Google's free servers). The backend normally supplies the full STUN+TURN
 // list via fetchIceServers; this is used only if that fetch fails.
 const STUN = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
@@ -79,6 +87,9 @@ export class RemoteConnection {
   private overviewXcv: RTCRtpTransceiver | null = null;
   // The signaling socket for the CURRENT attempt (closed once the P2P link is up or torn down).
   private signalWs: WebSocket | null = null;
+  // Cancels the CURRENT attempt's signaling machinery: the WS-open deadline and, when the HTTP
+  // fallback is active, its poll loop (plus a best-effort `end` so the hub/agent clean up now).
+  private cancelSignal: (() => void) | null = null;
   private appliedAnswer = false;
   private closed = false;
   private reconnectTimer = 0;
@@ -168,6 +179,8 @@ export class RemoteConnection {
     this.statsTimer = 0;
     this.flushConnectedTime?.(); // bank the session before the pc closes
     this.flushConnectedTime = null;
+    this.cancelSignal?.();
+    this.cancelSignal = null;
     if (this.signalWs) {
       const ws = this.signalWs;
       this.signalWs = null;
@@ -326,10 +339,15 @@ export class RemoteConnection {
 
     // Trickle ICE over the edge hub: publish the offer immediately (no gather wait) and stream
     // candidates BOTH ways as WS messages, so the connection forms as candidates arrive. The hub
-    // relays with ordered exactly-once delivery — no candidate keys, no de-dupe.
-    const sid = crypto.randomUUID();
+    // relays with ordered exactly-once delivery — no candidate keys, no de-dupe. When the WS can't
+    // open (hostile network), the SAME handshake continues over HTTPS: POST /v1/signal for the
+    // client->hub direction, a polled GET for the buffered hub->client replies.
+    let sid = crypto.randomUUID();
     const queuedCands: RTCIceCandidateInit[] = [];
     let connectSent = false;
+    let signalMode: "ws" | "http" = "ws";
+    let signalDead = false; // set by teardown — every async loop below checks it
+
     const sendSignal = (msg: Record<string, unknown>) => {
       if (this.signalWs?.readyState === WebSocket.OPEN) {
         try {
@@ -341,44 +359,18 @@ export class RemoteConnection {
       }
       return false;
     };
-    pc.onicecandidate = (ev) => {
-      if (!ev.candidate) return;
-      const cand = ev.candidate.toJSON();
-      if (!connectSent || !sendSignal({ t: "cand", sid, cand })) queuedCands.push(cand);
-    };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    const edgeUrl = (this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "");
-    const wsUrl = `${edgeUrl.replace(/^http/, "ws")}/v1/connect?role=client`;
-    const token = await auth.currentUser.getIdToken();
-    // Browsers can't set WS headers — the ID token rides the subprotocol list.
-    const ws = new WebSocket(wsUrl, [EDGE_WS_PROTOCOL, `auth.${token}`]);
-    this.signalWs = ws;
-    // Kept open for the life of the P2P session: a dying tab closes it, which tells the hub (and
-    // the agent) to drop the signaling state — the replacement for RTDB's onDisconnect cleanup.
-    ws.onopen = () => {
-      if (this.closed || this.signalWs !== ws) return;
-      sendSignal({ t: "connect", sid, device: this.deviceId, sdp: pc.localDescription?.sdp ?? "" });
-      connectSent = true;
-      while (queuedCands.length > 0) {
-        const cand = queuedCands.shift()!;
-        if (!sendSignal({ t: "cand", sid, cand })) {
-          queuedCands.unshift(cand);
-          break;
-        }
-      }
-    };
-    ws.onmessage = (ev) => {
-      if (this.closed || this.signalWs !== ws) return;
-      let msg: { v?: number; t?: string; sid?: string; sdp?: string; cand?: RTCIceCandidateInit; code?: string };
-      try {
-        msg = JSON.parse(String(ev.data)) as typeof msg;
-      } catch {
-        return;
-      }
-      if (msg.v !== 1) return;
+    // One hub->client signaling message — shared verbatim by the WS and HTTP channels.
+    // Returns true on a terminal end/error for this sid, which stops the HTTP poll loop.
+    const handleSignal = (msg: {
+      v?: number;
+      t?: string;
+      sid?: string;
+      sdp?: string;
+      cand?: RTCIceCandidateInit;
+      code?: string;
+    }): boolean => {
+      if (msg.v !== 1) return false;
       if (msg.t === "answer" && msg.sid === sid && msg.sdp && !this.appliedAnswer) {
         this.appliedAnswer = true;
         void pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
@@ -395,17 +387,185 @@ export class RemoteConnection {
           this.core.emit("status", "disconnected");
           this.scheduleReconnect();
         }
+        return true;
       }
+      return false;
+    };
+
+    const edgeUrl = (this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "");
+    const signalUrl = `${edgeUrl}/v1/signal`;
+
+    // ---- HTTP fallback channel ----
+    const postSignal = async (msg: Record<string, unknown>): Promise<Response> => {
+      const t = await auth.currentUser!.getIdToken();
+      return fetch(signalUrl, {
+        method: "POST",
+        headers: { authorization: `Bearer ${t}`, "content-type": "application/json" },
+        body: JSON.stringify({ v: 1, ...msg }),
+      });
+    };
+    // Candidates go out one at a time in order (a promise chain), like the WS framing they replace.
+    let candChain: Promise<unknown> = Promise.resolve();
+    const postCand = (cand: RTCIceCandidateInit) => {
+      candChain = candChain.then(
+        () => (signalDead ? undefined : postSignal({ t: "cand", sid, cand }).catch(() => undefined)),
+        () => undefined,
+      );
+    };
+
+    pc.onicecandidate = (ev) => {
+      if (!ev.candidate) return;
+      const cand = ev.candidate.toJSON();
+      if (!connectSent) {
+        queuedCands.push(cand);
+      } else if (signalMode === "http") {
+        postCand(cand);
+      } else if (!sendSignal({ t: "cand", sid, cand })) {
+        queuedCands.push(cand);
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    const runHttpSignaling = async () => {
+      const startedAt = Date.now();
+      try {
+        const res = await postSignal({ t: "connect", sid, device: this.deviceId, sdp: pc.localDescription?.sdp ?? "" });
+        if (signalDead || this.closed) return;
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? `HTTP ${res.status}`);
+        }
+      } catch (error) {
+        // Even resilient HTTPS failed (or the device is offline) — retry the whole attempt.
+        if (signalDead || this.closed) return;
+        this.core.emit("error", `Remote connect failed: ${(error as Error).message}`);
+        this.core.emit("status", "disconnected");
+        this.scheduleReconnect();
+        return;
+      }
+      connectSent = true;
+      while (queuedCands.length > 0) postCand(queuedCands.shift()!);
+
+      // Poll for the agent's answer/candidates until the P2P link is up or the session TTL runs
+      // out (the hub sweeps the session then anyway). Transient poll failures just poll again —
+      // surviving a lossy link is this channel's entire purpose.
+      let cursor = 0;
+      while (!signalDead && !this.closed) {
+        if (pc.connectionState === "connected") return; // media is up — signaling is done
+        if (Date.now() - startedAt > HTTP_SIGNAL_TTL_MS) break;
+        await new Promise((r) => setTimeout(r, HTTP_SIGNAL_POLL_MS + Math.random() * 500));
+        if (signalDead || this.closed) return;
+        try {
+          const t = await auth.currentUser!.getIdToken();
+          const res = await fetch(`${signalUrl}?sid=${encodeURIComponent(sid)}&since=${cursor}`, {
+            headers: { authorization: `Bearer ${t}` },
+          });
+          if (res.status === 404) break; // session expired/ended server-side
+          if (!res.ok) continue;
+          const body = (await res.json()) as { events?: unknown[]; next?: number };
+          if (signalDead || this.closed) return;
+          cursor = Number(body.next) || cursor;
+          for (const ev of body.events ?? []) {
+            if (handleSignal(ev as Parameters<typeof handleSignal>[0])) return;
+          }
+        } catch {
+          /* transient — next poll retries */
+        }
+      }
+      // TTL/404 without an answer: same outcome as the WS-path timeout error.
+      if (!signalDead && !this.closed && !this.appliedAnswer) {
+        this.core.emit("status", "disconnected");
+        this.scheduleReconnect();
+      }
+    };
+
+    const startHttpSignaling = () => {
+      if (signalDead || this.closed || this.appliedAnswer || signalMode === "http") return;
+      signalMode = "http";
+      // Drop the (still-dialing or dead) WS quietly — its handlers must not double-drive retries.
+      if (this.signalWs) {
+        const w = this.signalWs;
+        this.signalWs = null;
+        w.onopen = w.onclose = w.onmessage = w.onerror = null;
+        try {
+          w.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      // If the offer already went out over the WS, the agent may hold a half-open session for that
+      // sid (the hub ends it when the dead socket closes). A fresh sid makes this a clean new
+      // handshake instead of a duplicate offer.
+      if (connectSent) {
+        sid = crypto.randomUUID();
+        connectSent = false;
+      }
+      void runHttpSignaling();
+    };
+
+    // ---- WS channel (the normal path) ----
+    const wsUrl = `${edgeUrl.replace(/^http/, "ws")}/v1/connect?role=client`;
+    const token = await auth.currentUser.getIdToken();
+    // Browsers can't set WS headers — the ID token rides the subprotocol list.
+    const ws = new WebSocket(wsUrl, [EDGE_WS_PROTOCOL, `auth.${token}`]);
+    this.signalWs = ws;
+    // A WS that can't open quickly on a link where HTTPS works is the mountains failure mode.
+    const wsDeadline = window.setTimeout(startHttpSignaling, WS_SIGNAL_TIMEOUT_MS);
+    this.cancelSignal = () => {
+      signalDead = true;
+      window.clearTimeout(wsDeadline);
+      // The WS path cleans hub/agent state via the socket close; give the HTTP path the same
+      // courtesy so the session dies now, not at the 2-minute TTL. Best-effort (may race unload).
+      if (signalMode === "http" && connectSent) {
+        const endSid = sid;
+        void auth
+          .currentUser!.getIdToken()
+          .then((t) =>
+            fetch(signalUrl, {
+              method: "POST",
+              keepalive: true,
+              headers: { authorization: `Bearer ${t}`, "content-type": "application/json" },
+              body: JSON.stringify({ v: 1, t: "end", sid: endSid }),
+            }),
+          )
+          .catch(() => {});
+      }
+    };
+    // Kept open for the life of the P2P session: a dying tab closes it, which tells the hub (and
+    // the agent) to drop the signaling state — the replacement for RTDB's onDisconnect cleanup.
+    ws.onopen = () => {
+      if (this.closed || this.signalWs !== ws) return;
+      window.clearTimeout(wsDeadline);
+      sendSignal({ t: "connect", sid, device: this.deviceId, sdp: pc.localDescription?.sdp ?? "" });
+      connectSent = true;
+      while (queuedCands.length > 0) {
+        const cand = queuedCands.shift()!;
+        if (!sendSignal({ t: "cand", sid, cand })) {
+          queuedCands.unshift(cand);
+          break;
+        }
+      }
+    };
+    ws.onmessage = (ev) => {
+      if (this.closed || this.signalWs !== ws) return;
+      let msg: Parameters<typeof handleSignal>[0];
+      try {
+        msg = JSON.parse(String(ev.data)) as typeof msg;
+      } catch {
+        return;
+      }
+      handleSignal(msg);
     };
     ws.onclose = () => {
       if (this.closed || this.signalWs !== ws) return;
       this.signalWs = null;
-      // Socket died mid-handshake (edge hiccup, token expiry): retry. After the P2P link is up
-      // the peer connection owns the session and a signaling drop is irrelevant.
-      if (!this.appliedAnswer) {
-        this.core.emit("status", "disconnected");
-        this.scheduleReconnect();
-      }
+      window.clearTimeout(wsDeadline);
+      // Socket died mid-handshake (edge hiccup, token expiry, hostile middlebox): continue this
+      // attempt over HTTPS. After the P2P link is up the peer connection owns the session and a
+      // signaling drop is irrelevant.
+      if (!this.appliedAnswer) startHttpSignaling();
     };
   }
 
@@ -484,26 +644,33 @@ export class RemoteConnection {
     } catch {
       /* ignore */
     }
-    try {
-      const url = this.config.iceUrl || `${(this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "")}/v1/ice`;
-      const token = await user.getIdToken();
-      const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
-      if (res.ok) {
-        const body = (await res.json()) as { iceServers?: RTCIceServer[] };
-        if (Array.isArray(body.iceServers) && body.iceServers.length) {
-          try {
-            sessionStorage.setItem(
-              "wd-ice",
-              JSON.stringify({ servers: body.iceServers, exp: Date.now() + 8 * 60_000 }),
-            );
-          } catch {
-            /* ignore */
+    // Behind CGNAT (mobile in the mountains) a relay is MANDATORY — STUN-only can't punch through,
+    // so degrading to the public-STUN fallback there means "never connects". A single flaky request
+    // must not doom the attempt: retry a few times with backoff before giving up on TURN. The fetch
+    // itself has no timeout, so a merely-slow link waits rather than falling back prematurely.
+    const url = this.config.iceUrl || `${(this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "")}/v1/ice`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+        if (res.ok) {
+          const body = (await res.json()) as { iceServers?: RTCIceServer[] };
+          if (Array.isArray(body.iceServers) && body.iceServers.length) {
+            try {
+              sessionStorage.setItem(
+                "wd-ice",
+                JSON.stringify({ servers: body.iceServers, exp: Date.now() + 8 * 60_000 }),
+              );
+            } catch {
+              /* ignore */
+            }
+            return body.iceServers;
           }
-          return body.iceServers;
         }
+      } catch {
+        /* transient network error — retry below before falling back to STUN-only */
       }
-    } catch {
-      /* backend hiccup -> own STUN keeps direct/STUN working */
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
     }
     return fallback;
   }
