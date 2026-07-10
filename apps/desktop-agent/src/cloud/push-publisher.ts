@@ -17,7 +17,11 @@ const MIN_GAP_MS = 1000; // light throttle so a burst can't spam Firestore write
  * the controller PWA is closed. Cloud-mode only; best-effort (failures are logged, never
  * thrown). The Cloud Function and Firestore rules live in the web project.
  */
-export function startPushPublisher(hub: NotificationHub, rest: FirestoreRest): PushPublisherHandle {
+export function startPushPublisher(
+  hub: NotificationHub,
+  rest: FirestoreRest,
+  deviceId?: string,
+): PushPublisherHandle {
   let last = 0;
   const unsubscribe = hub.subscribe((n) => {
     if (SKIP_SOURCES.has(n.source)) return;
@@ -31,6 +35,9 @@ export function startPushPublisher(hub: NotificationHub, rest: FirestoreRest): P
         level: n.level,
         source: n.source,
         t: n.t,
+        // Lets the Cloud Function deep-link the notification click back to THIS machine on the
+        // dashboard (a plain /app/ open has no #token+device and is a dead page).
+        ...(deviceId ? { machine: deviceId } : {}),
       })
       .catch((error) => log.warn("push relay write failed:", (error as Error).message));
   });

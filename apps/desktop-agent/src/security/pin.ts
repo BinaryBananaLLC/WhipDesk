@@ -79,9 +79,9 @@ export class PinGuard {
     return this.record?.salt ?? "";
   }
 
-  /** Persist a new PIN (>= 4 chars). Stores only the stretched key. */
+  /** Persist a new PIN (>= 6 chars). Stores only the stretched key. */
   setPin(pin: string): void {
-    if (pin.length < 4) throw new Error("PIN must be at least 4 characters");
+    if (pin.length < 6) throw new Error("PIN must be at least 6 characters");
     const salt = randomBytes(16).toString("hex");
     const key = stretch(pin, salt, ITERATIONS);
     this.record = { salt, iterations: ITERATIONS, key };

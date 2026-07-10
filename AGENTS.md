@@ -11,6 +11,17 @@ when structure changes.
 - **Never update production.** No deploy/publish (`deploy:zip`, `firebase deploy`, FTP, …)
   unless the user gives a one-off explicit instruction for that exact deploy.
 
+## Cost estimates (always)
+
+When asked about cost, or when adding/changing ANYTHING that can raise the cost of running
+WhipDesk (Cloudflare Workers/Durable Objects, Firebase, TURN relay, storage, egress, …):
+- Assume scale = **50,000 daily active users × 20 dev machines each** (≈**1,000,000 always-on
+  agent connections**), and price the change at THAT scale.
+- **Never** count free tiers or included quotas — assume every provider's free allowance is
+  already exhausted and price from the first paid unit.
+- Show the arithmetic and the resulting **$/month** delta. Be especially wary of per-agent,
+  always-on, per-interval work (heartbeats, polls, wakes) — it multiplies by ~1,000,000.
+
 # STRICT TOKEN & CONTEXT LIMITS
 1. **Zero Chatter:** NO conversational filler, greetings, or acknowledgments (e.g., "Sure", "I can help", "Here is the code").
 2. **Code Only:** Output ONLY the requested code, terminal commands, or exact file diffs. 
@@ -49,7 +60,7 @@ Treat the transport as an interface, never branch on its type outside `transport
 | Notification source (watcher) | `apps/desktop-agent/src/watchers/*` |
 | Cloud device registry / auth | `apps/desktop-agent/src/cloud/*` |
 | WebSocket server | `apps/desktop-agent/src/transport/websocket.ts` |
-| WebRTC P2P | `apps/desktop-agent/src/transport/webrtc.ts`, `.../signaling/rtdb.ts`, `apps/mobile-web/src/remote.ts` |
+| WebRTC P2P | `apps/desktop-agent/src/transport/webrtc.ts`, `.../signaling/edge.ts`, `apps/mobile-web/src/remote.ts` |
 | Shared controller session (both transports) | `apps/desktop-agent/src/transport/session.ts` |
 | Mobile rendering / view modes | `apps/mobile-web/src/screen.ts` |
 | Mobile gestures / input | `apps/mobile-web/src/input.ts` |

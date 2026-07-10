@@ -1,11 +1,12 @@
 import { createServer, type Server } from "node:http";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { DEFAULTS, type AgentKind, type MonitorAddMessage, type MonitorInfo, type ScheduledAction, type ScreenInfo, type ServerMessage, type TimerAddMessage, type TimerInfo, type WatchRegion } from "@whipdesk/protocol";
+import { DEFAULTS, LASH_LIMITS, type AgentKind, type Lash, type LashStep, type MonitorAddMessage, type MonitorInfo, type ScheduledAction, type ScreenInfo, type ServerMessage, type TimerAddMessage, type TimerInfo, type WatchRegion } from "@whipdesk/protocol";
+import { hostname } from "node:os";
 import { safeEqual } from "./transport/session";
-import { AGENT_VERSION, loadConfig, type AgentConfig } from "./config";
+import { AGENT_VERSION, loadConfig, loadMachineName, saveMachineName, type AgentConfig } from "./config";
 import { ScreenCapturer, isFullViewport, type Viewport } from "./capture/screen";
 import { listDisplayGeometry, type DisplayGeometry } from "./capture/displays";
 import { selectInputBackend, type InputBackend } from "./input";
@@ -14,16 +15,20 @@ import { RegionWatcher } from "./watchers/region";
 import { Presence } from "./presence";
 import { KeepAwake } from "./power/keep-awake";
 import { DisplayWake } from "./power/wake-display";
+import { isSessionLocked } from "./power/session-lock";
 import { ensurePin } from "./security/setup";
 import { PinThrottle } from "./security/throttle";
 import type { PinGuard } from "./security/pin";
 import { attachWebSocket } from "./transport/websocket";
 import { startFileWatcher } from "./watchers/file-pattern";
 import { videoEncodingAvailable, VideoHub } from "./capture/encoder";
+import { windowsHdrState } from "./capture/hdr-win";
 import { SessionMonitor } from "./monitor/monitor";
 import { loadAlwaysAgents, saveAlwaysAgents } from "./monitor/always-store";
+import { loadTimers, saveTimers, type StoredTimer } from "./timer-store";
+import { loadLashes, sanitizeLash, saveLashes } from "./lash-store";
 import { isPackaged } from "./util/paths";
-import { announceUpdate, checkForUpdate } from "./util/update-check";
+import { startUpdateChecks } from "./util/update-check";
 import { log } from "./logger";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -55,6 +60,9 @@ export interface AgentContext {
   activeDisplay: number;
   /** Whether a real WebRTC video track can be offered (ffmpeg present + opt-in). */
   videoAvailable: boolean;
+  /** Host desktop is in HDR mode (Windows "advanced color") — surfaced in the welcome so the
+   * controller can warn that the tone-mapped stream may look washed. Refreshed lazily. */
+  hdrActive: boolean;
   /** Shared H.264 encoder + fan-out for WebRTC video tracks (null when video is off). */
   video: VideoHub | null;
   controllers: Set<Controller>;
@@ -74,6 +82,10 @@ export interface AgentContext {
   addTimer(msg: TimerAddMessage): void;
   removeTimer(id: string): void;
   listTimers(): TimerInfo[];
+  /** Create or update (by id) a lash in the LashStash (persisted in the state dir). */
+  saveLash(lash: Lash): void;
+  removeLash(id: string): void;
+  listLashes(): Lash[];
   /** (Re)scan for running AI-agent sessions and push the list to controllers. */
   scanMonitors(): Promise<void>;
   /** Start monitoring a discovered session; it pings once when the agent stops working. */
@@ -85,6 +97,12 @@ export interface AgentContext {
   listAlwaysAgents(): AgentKind[];
   /** Client-reported video link stats; drives the encoder's adaptive quality ladder. */
   reportVideoStats(lossPct: number, rttMs?: number): void;
+  /** The machine's display name: the user-chosen one when set, else the OS hostname. */
+  getMachineName(): string;
+  /** Persist a user-chosen display name ("" reverts to the hostname) and broadcast it. */
+  setMachineName(name: string): void;
+  /** Hook for the cloud layer: re-announce the device to the edge hub after a rename. */
+  onMachineNameChanged?: () => void;
 }
 
 export async function startAgent(): Promise<{ server: Server; config: AgentConfig; presence: Presence; keepAwake: KeepAwake; ctx: AgentContext }> {
@@ -136,6 +154,9 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
 
   const controllers = new Set<Controller>();
   let fps = config.fps;
+
+  // User-chosen display name (from the controller's connection dialog); "" = use the hostname.
+  let machineName = loadMachineName(config.stateDir);
 
   // Adaptive quality ladder: the client reports getStats loss every few seconds; sustained loss
   // steps the encoder down IMMEDIATELY (each step is a cheap restart — the RTP restamper keeps the
@@ -202,10 +223,12 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   let viewport: Viewport = { x: 0, y: 0, w: 1, h: 1 };
 
   // One-shot timers: reminders + an optional scheduled action (auto-click/keypress when an AI
-  // tool's cooldown ends). In-memory; lost on restart. On fire the action runs, then a
-  // notification goes out (to connected controllers AND the cloud push relay, so the user is
-  // pinged even with the app closed).
-  const timers = new Map<string, { id: string; label: string; fireAtMs: number; action?: ScheduledAction }>();
+  // tool's cooldown ends). Persisted to the state dir so an agent restart can't silently swallow
+  // a scheduled action (see timer-store.ts). On fire the action runs, then a notification goes
+  // out (to connected controllers AND the cloud push relay, so the user is pinged even with the
+  // app closed).
+  const timers = new Map<string, StoredTimer>();
+  const persistTimers = () => saveTimers(config.stateDir, [...timers.values()]);
   const listTimers = (): TimerInfo[] =>
     [...timers.values()].map((t) => ({ id: t.id, label: t.label, fireAtMs: t.fireAtMs, hasAction: !!t.action }));
   const broadcastTimers = () => {
@@ -232,31 +255,121 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     }, 1000);
   };
 
+  // A legacy single-shot action expressed as the equivalent step sequence, so ONE executor
+  // (runSteps) serves both the original click/key/text timers and multi-step lashes.
+  const actionSteps = (a: ScheduledAction): LashStep[] => {
+    if (a.kind === "steps") return a.steps ?? [];
+    const steps: LashStep[] = [];
+    if (typeof a.x === "number" && typeof a.y === "number") {
+      steps.push({ kind: "click", x: a.x, y: a.y, button: a.button ?? "left" });
+    }
+    if (a.kind === "key" && a.key) steps.push({ kind: "key", key: a.key });
+    else if (a.kind === "text" && a.text) steps.push({ kind: "text", text: a.text, submit: true });
+    return steps;
+  };
+
+  /**
+   * Run a step sequence against the real desktop. Shared by timer actions and lash execution.
+   * Throws (loudly) instead of guessing when the environment no longer matches the recording —
+   * a locked session or a disconnected display means the clicks would land somewhere wrong.
+   */
+  const runSteps = async (steps: LashStep[], displayId: number | undefined) => {
+    // A scheduled action usually fires with nobody connected, so the display has slept and the
+    // session may have locked since it was scheduled. Synthetic input does NOT wake a slept
+    // panel, and events injected into a locked session land on the lock screen instead of the
+    // target app — the exact "timer fired but the work wasn't done" failure. Wake the panel
+    // first, give it a moment to come up, then refuse (loudly) if the session is locked. With a
+    // controller connected the display is already held awake, so only a short settle is needed.
+    displayWake.wake(30);
+    await delay(controllers.size > 0 ? 500 : 3000);
+    const locked = await isSessionLocked();
+    if (locked === true) {
+      throw new Error(
+        "the screen is locked, so the input would go to the lock screen instead of your app. " +
+          "For unattended scheduled work, set the machine to not require a password immediately after display sleep.",
+      );
+    }
+    // Pointer coords are relative to the display a click was RECORDED on — the active display may
+    // have changed since, and one lash may even hop between monitors via "display" steps. Aim the
+    // input mapper at the right screen for each click (keyboard input ignores geometry, so this only
+    // affects clicks); a "display" step re-points it mid-run. If a needed display is gone, fail
+    // loudly rather than click the same spot on a wrong screen.
+    const geomFor = (id: number) => {
+      const d = displays.find((x) => x.id === id);
+      if (!d || d.width <= 0 || d.height <= 0) throw new Error(`the display it was recorded on ([${id}]) is no longer connected`);
+      return { originX: d.originX, originY: d.originY, width: d.width, height: d.height };
+    };
+    let inputPinned = false;
+    const pinInputTo = (id: number) => {
+      input.setActiveDisplay(geomFor(id));
+      inputPinned = true;
+    };
+    const restoreInput = () => {
+      if (!inputPinned) return;
+      const cur = displays.find((d) => d.id === activeDisplay);
+      input.setActiveDisplay(
+        cur && cur.width > 0 && cur.height > 0
+          ? { originX: cur.originX, originY: cur.originY, width: cur.width, height: cur.height }
+          : null,
+      );
+    };
+    // Pin the recording display up front only if a click runs BEFORE the first monitor switch.
+    const firstSwitch = steps.findIndex((s) => s.kind === "display");
+    const clicksBeforeSwitch = steps.some((s, i) => s.kind === "click" && (firstSwitch === -1 || i < firstSwitch));
+    if (displayId !== undefined && displayId !== activeDisplay && clicksBeforeSwitch) {
+      pinInputTo(displayId);
+    }
+    try {
+      for (const [i, s] of steps.entries()) {
+        switch (s.kind) {
+          case "display":
+            if (typeof s.displayId !== "number") throw new Error("monitor-switch step has no display");
+            pinInputTo(s.displayId);
+            break;
+          case "click":
+            if (typeof s.x !== "number" || typeof s.y !== "number") throw new Error("click step has no target");
+            await input.click(s.button ?? "left", s.double === true, s.x, s.y);
+            break;
+          case "key":
+            if (s.key) await input.keyTap(s.key, s.modifiers);
+            break;
+          case "text":
+            if (s.text) await input.typeText(s.text, s.submit !== false);
+            break;
+          case "wait":
+            await delay(Math.min(Math.max(0, s.ms ?? 0), LASH_LIMITS.MAX_WAIT_MS));
+            break;
+          default:
+            throw new Error(`unsupported step kind "${(s as LashStep).kind}" — update this agent`);
+        }
+        // Give the desktop a short beat between steps (an explicit wait already IS the beat):
+        // a click needs time to actually move focus before the next keystrokes, otherwise the
+        // first keys (e.g. the Enter that submits a prompt) land early and get dropped. This is
+        // the robustness gap that made auto-prompt timers flaky.
+        if (i < steps.length - 1 && s.kind !== "wait") await delay(250);
+      }
+    } finally {
+      restoreInput();
+    }
+  };
+
   const fireTimer = async (id: string) => {
     const t = timers.get(id);
     if (!t) return;
     timers.delete(id); // delete BEFORE any await so the ticker can never double-fire this timer
+    persistTimers();
     broadcastTimers();
     const a = t.action;
     if (a) {
       try {
         log.info(`timer "${t.label || id}" firing${a.kind ? ` (${a.kind})` : ""}`);
-        // Clicking the target IS the action for "click", and focuses it before a key/text action.
-        // Give the focused app a short beat to actually take focus before we type/press — otherwise
-        // the first keystrokes (e.g. an Enter that submits a prompt) can land before the field is
-        // ready and get dropped. This is the robustness gap that made auto-prompt timers flaky.
-        if (typeof a.x === "number" && typeof a.y === "number") {
-          await input.click(a.button ?? "left", false, a.x, a.y);
-          if (a.kind === "key" || a.kind === "text") await delay(250);
-        }
-        if (a.kind === "key" && a.key) await input.keyTap(a.key);
-        else if (a.kind === "text" && a.text) await input.typeText(a.text, true);
+        await runSteps(actionSteps(a), t.displayId);
       } catch (error) {
         const message = (error as Error).message ?? String(error);
         log.warn("timer action failed:", message);
         hub.emit({
-          title: t.label || "WhipDesk timer",
-          body: `Timer reached zero, but its scheduled action failed: ${message.slice(0, 120)}`,
+          title: t.label || "Scheduled work",
+          body: `Time's up, but the scheduled action failed: ${message.slice(0, 120)}`,
           level: "error",
           source: "timer",
         });
@@ -264,12 +377,46 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       }
     }
     hub.emit({
-      title: t.label || "WhipDesk timer",
-      body: a ? "Timer reached zero — scheduled action sent." : "Timer reached zero.",
+      title: t.label || "Scheduled work",
+      body: a ? "Time's up — scheduled action done." : "Time's up.",
       level: "success",
       source: "timer",
     });
   };
+
+  // Restore persisted timers so an agent restart can't silently swallow a scheduled action. Ones
+  // that came due while the agent was DOWN are reported as missed, never blindly executed hours
+  // late into whatever is on screen now.
+  for (const t of loadTimers(config.stateDir)) {
+    if (t.fireAtMs <= Date.now()) {
+      hub.emit({
+        title: t.label || "Scheduled work",
+        body: "This came due while WhipDesk was not running — its action was NOT performed.",
+        level: "error",
+        source: "timer",
+      });
+    } else {
+      timers.set(t.id, t);
+    }
+  }
+  persistTimers(); // drop the missed ones from disk
+  if (timers.size > 0) {
+    ensureTimerTicker();
+    log.info(`restored ${timers.size} pending timer${timers.size === 1 ? "" : "s"} from disk`);
+  }
+
+  // The LashStash: saved multi-step automations, persisted in the state dir (device-specific —
+  // their coordinates are tied to THIS machine's screens, so they never sync to the cloud).
+  // Executing one is just a short timer with a "steps" action, so it reuses the whole timer
+  // pipeline: persistence, countdown broadcast, wake/lock checks, and display pinning.
+  const lashes = new Map<string, Lash>(loadLashes(config.stateDir).map((l) => [l.id, l]));
+  const persistLashes = () => saveLashes(config.stateDir, [...lashes.values()]);
+  const listLashes = (): Lash[] => [...lashes.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  const broadcastLashes = () => {
+    const msg: ServerMessage = { type: "lashes", lashes: listLashes() };
+    for (const c of controllers) c.send(msg);
+  };
+  if (lashes.size > 0) log.info(`loaded ${lashes.size} lash${lashes.size === 1 ? "" : "es"} from disk`);
 
   const captureOnce = async (): Promise<"ok" | "fail" | "idle"> => {
     // The LIVE screen is the direct H.264 capture (encoder.ts); this sampler exists ONLY to feed
@@ -346,6 +493,7 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     displays,
     videoAvailable,
     video,
+    hdrActive: false,
     get activeDisplay() {
       return activeDisplay;
     },
@@ -353,6 +501,9 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     addController(controller) {
       controllers.add(controller);
       log.info(`controller connected (${controllers.size} active)`);
+      // Refresh the HDR flag for FUTURE welcomes (this one ships the last known state — the
+      // probe is async and HDR flips are rare enough that eventual consistency is fine).
+      void windowsHdrState().then((s) => (ctx.hdrActive = s?.active === true));
       // The controller just passed token + PIN: wake the display so they can reach the lock screen
       // (and keep it on while they're connected). Synthetic input alone won't wake a slept panel.
       displayWake.setActive(true);
@@ -386,6 +537,17 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     setVisibility(controller, visible) {
       controller.visible = visible;
       recomputeVideoPause();
+    },
+    getMachineName() {
+      return machineName || hostname();
+    },
+    setMachineName(name) {
+      machineName = name.trim().slice(0, 64);
+      saveMachineName(config.stateDir, machineName);
+      const effective = ctx.getMachineName();
+      log.info(`machine renamed to "${effective}"`);
+      for (const c of controllers) c.send({ type: "machine-name", name: effective });
+      ctx.onMachineNameChanged?.(); // let the cloud layer re-announce to the edge hub
     },
     reportVideoStats(lossPct) {
       if (!video || !Number.isFinite(lossPct)) return;
@@ -462,17 +624,39 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       const fireInMs = Math.max(1000, Math.min(msg.fireInMs, 7 * 24 * 3600_000)); // 1s .. 7 days
       const fireAtMs = Date.now() + fireInMs;
       // Re-adding the same id just updates its deadline; the shared ticker handles the rest.
-      timers.set(msg.id, { id: msg.id, label: msg.label, fireAtMs, action: msg.action });
+      // Pin the action to the display it was aimed at: a lash carries the display it was RECORDED
+      // on; anything else targets what the controller is currently viewing.
+      const displayId = msg.action?.displayId ?? activeDisplay;
+      timers.set(msg.id, { id: msg.id, label: msg.label, fireAtMs, action: msg.action, displayId });
+      persistTimers();
       ensureTimerTicker();
       broadcastTimers();
       log.info(`timer "${msg.label}" in ${Math.round(fireInMs / 1000)}s${msg.action ? ` (+${msg.action.kind})` : ""}`);
     },
     removeTimer(id) {
       if (!timers.delete(id)) return;
+      persistTimers();
       broadcastTimers();
     },
     listTimers() {
       return listTimers();
+    },
+    saveLash(raw) {
+      const lash = sanitizeLash(raw);
+      if (!lash) return;
+      if (!lashes.has(lash.id) && lashes.size >= LASH_LIMITS.MAX_LASHES) return; // full — reject new
+      lashes.set(lash.id, lash);
+      persistLashes();
+      broadcastLashes();
+      log.info(`lash "${lash.name}" saved (${lash.steps.length} step${lash.steps.length === 1 ? "" : "s"})`);
+    },
+    removeLash(id) {
+      if (!lashes.delete(id)) return;
+      persistLashes();
+      broadcastLashes();
+    },
+    listLashes() {
+      return listLashes();
     },
     async scanMonitors() {
       const sessions = await monitor.scan();
@@ -569,9 +753,18 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   });
 
   if (existsSync(webDist)) {
-    app.use(express.static(webDist));
+    // Explicit Cache-Control: without it browsers heuristically cache index.html, so a rebuilt
+    // controller kept serving the OLD hashed bundles until a hard refresh. Vite's /assets/* are content-hashed → cache forever; everything else (the
+    // HTML shell, manifest, push service worker) must revalidate — cheap 304s via ETag.
+    const setCacheHeaders = (res: express.Response, filePath: string): void => {
+      const immutable = filePath.includes(`${sep}assets${sep}`);
+      res.setHeader("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "no-cache");
+    };
+    app.use(express.static(webDist, { setHeaders: setCacheHeaders }));
     // Express 5: bare "*" is no longer a valid route path — wildcards must be named.
-    app.get("/*splat", (_req, res) => res.sendFile(join(webDist, "index.html")));
+    app.get("/*splat", (_req, res) =>
+      res.sendFile(join(webDist, "index.html"), { headers: { "Cache-Control": "no-cache" } }),
+    );
   } else {
     log.warn(`mobile-web build not found at ${webDist} — run "npm run build:web"`);
     app.get("/", (_req, res) =>
@@ -589,14 +782,23 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   await new Promise<void>((resolve) => server.listen(config.port, resolve));
   presence.start();
   if (config.keepAwake) keepAwake.start();
-  // Packaged agents get a one-shot "update available" notice (source checkouts update via git).
+  // Packaged agents check for updates at startup + daily (source checkouts update via git).
+  // Anonymous and documented in README "Privacy & telemetry"; opt out via .whipdesk/settings.json.
   if (isPackaged()) {
-    void checkForUpdate(AGENT_VERSION).then((latest) => {
-      if (latest) announceUpdate(latest, AGENT_VERSION, (n) => hub.emit(n));
-    });
+    startUpdateChecks(AGENT_VERSION, config.stateDir, (n) => hub.emit(n));
   }
   log.info(`listening on :${config.port} (capture: ${capturer.backend}, input: ${input.name})`);
   log.info(pin.isSet ? "connection PIN: required" : "connection PIN: NONE (set one in a terminal)");
+  // HDR heads-up (Windows): the capture tone-maps the HDR desktop to SDR, but tone-mapping is an
+  // approximation — tell the user up front so a washed-looking stream isn't a mystery.
+  void windowsHdrState().then((s) => {
+    ctx.hdrActive = s?.active === true;
+    if (s?.active) {
+      log.warn(
+        "HDR is ON on this desktop — the remote stream is tone-mapped to SDR and colors may look washed out. Turn HDR off if it bothers you.",
+      );
+    }
+  });
   return { server, config, presence, keepAwake, ctx };
 }
 

@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
-import { homedir, platform } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentKind } from "@whipdesk/protocol";
 
@@ -20,12 +20,6 @@ export interface AgentDef {
    */
   activityPaths(cwd: string): string[];
   /**
-   * The process's own %CPU is meaningless for this agent, so state inference must not use it.
-   * Needed for editor-embedded agents (VS Code's extension host runs EVERY extension plus things
-   * like tsserver children — its CPU says nothing about whether Copilot is generating).
-   */
-  ignoreCpu?: boolean;
-  /**
    * Optional precision refinement: peek at the newest transcript's LAST entry to disambiguate the
    * quiet window between "still mid-turn" (a tool is running / the model owns the turn — treat as
    * working) and "turn ended" (waiting on the user). Only consulted when mtime alone is ambiguous.
@@ -42,24 +36,65 @@ function claudeProjectDir(cwd: string): string {
 }
 
 /**
+ * Newest transcript for a session. Prefer the cwd's project dir; when the cwd can't be resolved
+ * (common when Claude Code runs embedded in an editor — the VS Code extension — where the process
+ * cwd often isn't readable) OR that dir has no transcript, fall back to the most recently ACTIVE
+ * project dir. Without this fallback the quiet-window hint below is skipped entirely for editor
+ * sessions, so a long "thinking/planning" pause is misread as "waiting on you" and pings falsely.
+ */
+function newestClaudeJsonl(cwd: string): string | null {
+  if (cwd) {
+    const own = newestJsonl(claudeProjectDir(cwd));
+    if (own) return own;
+  }
+  const root = join(home, ".claude", "projects");
+  let newestDir: string | null = null;
+  let newestMs = 0;
+  try {
+    for (const proj of readdirSync(root)) {
+      const dir = join(root, proj);
+      try {
+        const ms = statSync(dir).mtimeMs;
+        if (ms > newestMs) {
+          newestMs = ms;
+          newestDir = dir;
+        }
+      } catch {
+        /* raced a delete */
+      }
+    }
+  } catch {
+    return null;
+  }
+  return newestDir ? newestJsonl(newestDir) : null;
+}
+
+/**
  * The quiet-window disambiguator for Claude Code: read the last complete JSONL line of the newest
- * session transcript. An assistant entry that ends in `tool_use` means a tool is still executing
- * (working); an assistant entry that ends in text means the turn is over (waiting on the user); a
- * user entry means the model owns the turn (working). Anything unreadable returns null (no hint).
+ * session transcript and decide whether the model still owns the turn ("working") or has handed it
+ * back ("waiting on the user"). The model only TRULY ends its turn with `stop_reason: "end_turn"`
+ * (or "stop_sequence"); an unfinished/streaming message, an extended-thinking block, plan text, or
+ * a `tool_use` are all still its turn — those must read as WORKING so a thinking/planning agent is
+ * never mistaken for one that needs you. A `user` entry (a real prompt or a tool_result fed back)
+ * also means the model's turn. Anything unreadable returns null (no hint).
  */
 async function claudeTailHint(cwd: string): Promise<"working" | "waiting" | null> {
-  const line = readLastJsonlLine(newestJsonl(claudeProjectDir(cwd)));
+  const line = readLastJsonlLine(newestClaudeJsonl(cwd));
   if (!line) return null;
   try {
     const entry = JSON.parse(line) as {
       type?: string;
-      message?: { content?: Array<{ type?: string }> | string };
+      message?: { content?: Array<{ type?: string }> | string; stop_reason?: string | null };
     };
     if (entry.type === "user") return "working";
     if (entry.type === "assistant") {
       const content = entry.message?.content;
+      // A tool call is still executing / about to run → working.
       if (Array.isArray(content) && content.some((c) => c?.type === "tool_use")) return "working";
-      return "waiting";
+      // Only a completed turn hands control back. Thinking/plan/streaming text (no or non-terminal
+      // stop_reason) is still the model working — NOT a prompt for the user.
+      const stop = entry.message?.stop_reason;
+      return stop === "end_turn" || stop === "stop_sequence" ? "waiting" : "working";
     }
   } catch {
     /* torn write mid-line — no hint this poll */
@@ -110,88 +145,13 @@ function readLastJsonlLine(path: string | null): string | null {
   }
 }
 
-// ---------------------------------------------------------------------------
-// VS Code Copilot Chat: it runs INSIDE the extension-host process (no `copilot` in any argv), so
-// process matching alone can't see it. Two extra signals make it observable:
-//  1. Match the extension host itself when a Copilot extension is installed (checked below).
-//  2. Watch VS Code's chat-session storage as the activity path — Copilot Chat appends to
-//     workspaceStorage/<hash>/chatSessions/*.json as a conversation progresses, which is exactly
-//     the transcript-mtime signal the state machine already runs on.
-// ---------------------------------------------------------------------------
-
-/** VS Code user-data roots per platform (stable + Insiders + OSS builds). */
-function vsCodeUserDirs(): string[] {
-  const variants = ["Code", "Code - Insiders", "VSCodium"];
-  if (platform() === "darwin") return variants.map((v) => join(home, "Library", "Application Support", v, "User"));
-  if (platform() === "win32") {
-    const appData = process.env.APPDATA || join(home, "AppData", "Roaming");
-    return variants.map((v) => join(appData, v, "User"));
-  }
-  return variants.map((v) => join(home, ".config", v, "User"));
-}
-
-/** The most recently used workspaces' chat-session dirs (bounded so polling stays cheap). */
-function vsCodeChatSessionDirs(): string[] {
-  const out: Array<{ path: string; ms: number }> = [];
-  for (const user of vsCodeUserDirs()) {
-    const storage = join(user, "workspaceStorage");
-    let entries: string[];
-    try {
-      entries = readdirSync(storage);
-    } catch {
-      continue;
-    }
-    for (const hash of entries) {
-      for (const kind of ["chatSessions", "chatEditingSessions"]) {
-        const dir = join(storage, hash, kind);
-        try {
-          out.push({ path: dir, ms: statSync(dir).mtimeMs });
-        } catch {
-          /* workspace has no chat storage */
-        }
-      }
-    }
-  }
-  return out
-    .sort((a, b) => b.ms - a.ms)
-    .slice(0, 5)
-    .map((e) => e.path);
-}
-
-/** Is a GitHub Copilot extension installed in any VS Code variant? Cached — checked at most
- * once a minute, because `match` runs for every process on every 3s poll. */
-let copilotInstalledCache: { value: boolean; at: number } | null = null;
-function vsCodeCopilotInstalled(): boolean {
-  const now = Date.now();
-  if (copilotInstalledCache && now - copilotInstalledCache.at < 60_000) return copilotInstalledCache.value;
-  let value = false;
-  for (const dir of [join(home, ".vscode", "extensions"), join(home, ".vscode-insiders", "extensions"), join(home, ".vscode-oss", "extensions")]) {
-    try {
-      if (readdirSync(dir).some((e) => e.toLowerCase().startsWith("github.copilot"))) {
-        value = true;
-        break;
-      }
-    } catch {
-      /* variant not installed */
-    }
-  }
-  copilotInstalledCache = { value, at: now };
-  return value;
-}
-
-/** The VS Code extension-host process (hosts Copilot Chat). Marker differs across VS Code
- * versions: legacy `--type=extensionHost`, current utility-process `extensionHostProcess`. */
-function isVsCodeExtensionHost(cmd: string): boolean {
-  return cmd.includes("--type=extensionhost") || cmd.includes("extensionhostprocess");
-}
-
 export const AGENTS: AgentDef[] = [
   {
     kind: "claude",
     label: "Claude Code",
     match: (t) => has(t, "claude") || has(t, "claude-code"),
     activityPaths: (cwd) => [...(cwd ? [claudeProjectDir(cwd)] : []), join(home, ".claude", "projects")],
-    tailHint: (cwd) => (cwd ? claudeTailHint(cwd) : Promise.resolve(null)),
+    tailHint: (cwd) => claudeTailHint(cwd),
   },
   {
     kind: "codex",
@@ -218,24 +178,15 @@ export const AGENTS: AgentDef[] = [
     activityPaths: () => [join(home, ".local", "share", "opencode")],
   },
   {
-    // Four ways Copilot shows up, in matching order:
-    //  - the `copilot` CLI (argv basename), which logs under ~/.copilot;
-    //  - the completions language server, a child process whose command line carries
-    //    `copilot-language-server` or the extension path `github.copilot[-chat]`;
-    //  - Copilot CHAT, which runs inside VS Code's extension host with NO copilot marker in any
-    //    argv — matched via the extension host itself when a Copilot extension is installed, with
-    //    VS Code's chat-session storage as the transcript (see vsCodeChatSessionDirs).
-    // CPU is ignored: the extension host runs every extension (plus tsserver children), so its CPU
-    // says nothing about Copilot — chat-storage mtime is the real signal.
+    // ONLY the interactive `copilot` CLI (argv basename), which logs under ~/.copilot. Editor-
+    // embedded Copilot (VS Code's extension host, the completions language server, chat-session
+    // storage) is deliberately NOT matched: those processes run whenever the editor does and the
+    // editor touches that storage during ordinary use, so every heuristic tried produced phantom
+    // "busy" sessions while the user wasn't using Copilot at all.
     kind: "copilot",
-    label: "GitHub Copilot",
-    match: (t, cmd) =>
-      has(t, "copilot") ||
-      cmd.includes("copilot-language-server") ||
-      cmd.includes("github.copilot") ||
-      (isVsCodeExtensionHost(cmd) && vsCodeCopilotInstalled()),
-    activityPaths: () => [join(home, ".copilot"), ...vsCodeChatSessionDirs()],
-    ignoreCpu: true,
+    label: "Copilot CLI",
+    match: (t) => has(t, "copilot"),
+    activityPaths: () => [join(home, ".copilot")],
   },
   { kind: "cursor", label: "Cursor Agent", match: (t) => has(t, "cursor-agent"), activityPaths: () => [] },
   {
@@ -263,7 +214,7 @@ const LABELS: Record<AgentKind, string> = {
   codex: "Codex CLI",
   gemini: "Gemini CLI",
   aider: "Aider",
-  copilot: "GitHub Copilot",
+  copilot: "Copilot CLI",
   opencode: "opencode",
   cursor: "Cursor Agent",
   amp: "Amp",

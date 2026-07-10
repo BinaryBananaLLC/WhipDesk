@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import screenshot from "screenshot-desktop";
 import type { DisplayInfo, ScreenInfo } from "@whipdesk/protocol";
+import { optionalImport } from "../util/optional-import";
+import { listWindowsDisplays } from "./displays-win";
 import { log } from "../logger";
 
 const exec = promisify(execFile);
@@ -56,14 +57,34 @@ async function readNsScreens(): Promise<NsScreen[] | null> {
   }
 }
 
-/** screenshot-desktop's display list: 0-based ids, primary first, names but no geometry. */
+/** screenshot-desktop returns raw OS device names on Windows (e.g. "\\.\DISPLAY2") which look
+ * cryptic in the picker. Normalize those to a friendly "Display N"; leave meaningful names (macOS
+ * gives "Built-in Retina Display", monitor model names, etc.) untouched. */
+function friendlyDisplayName(raw: unknown, index: number): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return `Display ${index + 1}`;
+  const m = /DISPLAY(\d+)/i.exec(s);
+  if (m) return `Display ${m[1]}`;
+  // Any other GDI-style device path (\\.\...) is not user-friendly either.
+  if (/^\\\\/.test(s)) return `Display ${index + 1}`;
+  return s;
+}
+
+/** screenshot-desktop's display list: 0-based ids, primary first, names but no geometry.
+ * Non-Windows only — Windows enumerates natively (listWindowsDisplays) so it can drop the dep. */
 async function listBaseDisplays(): Promise<Array<{ id: number; name: string; primary: boolean }>> {
   try {
+    const mod = await optionalImport("screenshot-desktop");
+    const screenshot = mod ? (mod.default ?? mod) : null;
+    if (!screenshot) {
+      log.warn("screenshot-desktop not available — assuming a single primary display");
+      return [];
+    }
     const displays = await screenshot.listDisplays();
-    return displays.map((d, index) => ({
+    return displays.map((d: { id?: number; name?: string; primary?: boolean }, index: number) => ({
       id: typeof d.id === "number" ? d.id : index,
-      name: String(d.name ?? `Display ${index + 1}`),
-      primary: Boolean((d as { primary?: boolean }).primary) || index === 0,
+      name: friendlyDisplayName(d.name, index),
+      primary: Boolean(d.primary) || index === 0,
     }));
   } catch (error) {
     log.warn("listDisplays failed:", (error as Error).message);
@@ -83,6 +104,35 @@ async function listBaseDisplays(): Promise<Array<{ id: number; name: string; pri
  * the primary display still maps input correctly even without JXA.
  */
 export async function listDisplayGeometry(fallback: ScreenInfo): Promise<DisplayGeometry[]> {
+  // Windows: native EnumDisplayDevices probe returns geometry directly, in the same order ddagrab's
+  // output_idx uses. Falls through to the single-primary default below when the probe fails, so a
+  // bad probe degrades gracefully instead of crashing.
+  if (process.platform === "win32") {
+    const wins = await listWindowsDisplays();
+    if (wins && wins.length > 0) {
+      // DPI reconciliation. EnumDisplaySettings reports geometry in PHYSICAL pixels (e.g. 3840x2160
+      // on a 4K panel), but nut.js drives the cursor in the process's coordinate space — which
+      // Windows DPI-VIRTUALIZES to logical pixels (2560x1440 at 150%) because the Node runtime is not
+      // per-monitor DPI aware. Feeding physical coords straight to nut.js made a normalized click
+      // overshoot by the scale factor and clamp into a screen corner — the "scheduled click hit the
+      // bottom-left instead of my button" bug, and Windows-only (macOS NSScreen + nut.js are both
+      // logical, so they already agree). Divide every display's geometry by the ratio of the physical
+      // primary width to nut.js's reported primary width: that ratio is the system scale when nut is
+      // DPI-unaware and exactly 1.0 if it ever reports physical, so this self-corrects either way.
+      const primaryWin = wins.find((w) => w.primary) ?? wins[0]!;
+      const scale = fallback.width > 0 && primaryWin.width > 0 ? primaryWin.width / fallback.width : 1;
+      return wins.map((d) => ({
+        id: d.id,
+        name: friendlyDisplayName(d.name, d.id),
+        primary: d.primary || d.id === 0,
+        width: Math.round(d.width / scale),
+        height: Math.round(d.height / scale),
+        originX: Math.round(d.originX / scale),
+        originY: Math.round(d.originY / scale),
+      }));
+    }
+  }
+
   const base = await listBaseDisplays();
   const ns = await readNsScreens();
 

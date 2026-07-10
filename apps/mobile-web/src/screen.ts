@@ -78,6 +78,12 @@ export class ScreenView {
   private regionBridge = 0;
   /** Pending jitter-buffer hold before adopting a region the host just reported LIVE. */
   private regionActiveHold = 0;
+  /** True once this agent has sent any `active:true` region echo. From then on the blind
+   * REGION_BRIDGE_MS fallback is never armed: under re-crop churn (rapid pan swipes) a crop can
+   * take far longer than any fixed timer to go live, and a blind flip draws the OLD-crop frame at
+   * the NEW rectangle — the "wrong part of the screen" bug. Same-aspect pans have no draw-time
+   * safety net, so placement must wait for the host's real signal. */
+  private hasActiveEcho = false;
 
   private screen: ScreenInfo = { width: 0, height: 0 };
   private viewMode: ViewMode = "fit";
@@ -86,6 +92,7 @@ export class ScreenView {
   private cursor: { nx: number; ny: number } | null = null;
   private onZoomCb?: (zoom: number) => void;
   private onViewCb?: (region: Region) => void;
+  private onGestureCb?: (active: boolean) => void;
 
   // While a pan/zoom gesture is in progress we DON'T ask the host to re-crop: re-cropping mid-drag
   // thrashes the capture and can land a stale crop while the finger is still moving. We mark the
@@ -338,10 +345,13 @@ export class ScreenView {
     // A new request supersedes any pending adopt for the previous region.
     window.clearTimeout(this.regionActiveHold);
     window.clearTimeout(this.regionBridge);
-    this.regionBridge = window.setTimeout(() => {
-      this.shownRegion = next;
-      if (!this.videoActive) this.requestDraw();
-    }, REGION_BRIDGE_MS);
+    // Blind fallback ONLY for old agents that never send active echoes (see hasActiveEcho).
+    if (!this.hasActiveEcho) {
+      this.regionBridge = window.setTimeout(() => {
+        this.shownRegion = next;
+        if (!this.videoActive) this.requestDraw();
+      }, REGION_BRIDGE_MS);
+    }
     if (!this.videoActive) this.requestDraw();
   }
 
@@ -351,17 +361,33 @@ export class ScreenView {
    * own aspect can't reveal the switch) depend on this; without it they relied on a blind timer that
    * raced the variable re-crop latency, snapping the frame to the wrong place early or late. */
   setFrameRegionActive(r: Region | null): void {
+    this.hasActiveEcho = true; // this agent sends live signals — retire the blind fallback timer
     const next = isFull(r) ? null : r;
     // Ignore a stale active echo for a region we've already panned/zoomed past — the current
     // target's own active echo will follow.
     if (!sameRegion(next, this.region)) return;
     if (sameRegion(next, this.shownRegion)) return; // already placed there
     window.clearTimeout(this.regionActiveHold);
-    this.regionActiveHold = window.setTimeout(() => {
-      if (!sameRegion(next, this.region)) return; // target moved while we held
+    const adopt = () => {
+      if (!sameRegion(next, this.region)) return; // target moved while we waited
       this.shownRegion = next;
       window.clearTimeout(this.regionBridge);
       if (!this.videoActive) this.requestDraw();
+    };
+    this.regionActiveHold = window.setTimeout(() => {
+      if (!sameRegion(next, this.region)) return; // target moved while we held
+      // "Active" means the agent put the new crop's FIRST PACKET on the wire — not that this
+      // browser decoded it. On a lossy remote link that first IDR can be lost (the next forced
+      // keyframe repairs it seconds later), and flipping on a fixed timer paints the old-crop
+      // frame at the new rectangle in the meantime — a pan keeps the aspect identical, so
+      // nothing downstream can catch it. Flip on the next frame the browser actually PRESENTS:
+      // until real new content exists, the old frame stays at its true (old) place over the live
+      // overview, which is geometrically correct. Fixed-timer only where rVFC is unsupported.
+      const el = this.mainEl as
+        | (HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number })
+        | null;
+      if (el && typeof el.requestVideoFrameCallback === "function") el.requestVideoFrameCallback(adopt);
+      else adopt();
     }, REGION_ACTIVE_HOLD_MS);
   }
 
@@ -440,6 +466,12 @@ export class ScreenView {
   setOnView(cb: (region: Region) => void): void {
     this.onViewCb = cb;
   }
+  /** Notified when a touch gesture begins (true) / ends (false). The end notification fires AFTER
+   * the end-of-gesture view emission, so "gesture ended without changing the view" is detectable
+   * — the controller uses this to hold host re-crops while the user is still interacting. */
+  setOnGesture(cb: (active: boolean) => void): void {
+    this.onGestureCb = cb;
+  }
   /**
    * Bracket a pan/zoom gesture so the host re-crop is deferred until it FINISHES. The input layer
    * calls beginViewGesture() when the first finger lands and endViewGesture() when the last finger
@@ -449,6 +481,7 @@ export class ScreenView {
    */
   beginViewGesture(): void {
     this.gestureActive = true;
+    this.onGestureCb?.(true);
   }
   endViewGesture(): void {
     if (!this.gestureActive) return;
@@ -457,6 +490,7 @@ export class ScreenView {
       this.viewDirty = false;
       this.onViewCb?.(this.getVisibleRegion());
     }
+    this.onGestureCb?.(false);
   }
   private emitView(): void {
     if (this.gestureActive) {

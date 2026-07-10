@@ -158,7 +158,14 @@ textarea {
 .wd-transport[data-kind="lan"] {
   background: #3b82f6;
 }
-/* alerts bell — a standalone button pinned to the top-right corner, with a count badge */
+/* Auto-Whips button — a standalone button pinned to the top-right corner, with a count badge.
+   Shows the whip brand mark (the feature is about automating work, not notification settings). */
+.wd-whip-mark {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
+}
 .wd-bell {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 8px);
@@ -225,7 +232,7 @@ textarea {
   align-items: stretch;
   gap: 8px;
 }
-/* Viewer is ONE row, period. Both the pane and the group item-rows are nowrap, so no button —
+/* Browse is ONE row, period. Both the pane and the group item-rows are nowrap, so no button —
    including the ones inside Zoom/Scroll — can ever drop to a second line. Sizes are mobile-first
    (compact enough to fit ~320px) and grow on wider screens. min-width:0 lets groups shrink so the
    row stays on a single line; overflow-x is only a last-ditch safety net (hidden scrollbar). */
@@ -458,6 +465,69 @@ textarea {
   color: var(--text);
   cursor: pointer;
 }
+/* Fullscreen toggle in the ribbon: only worth showing on a touch device held in landscape, where
+   the browser's own chrome eats the little vertical space there is. Hidden on desktop and portrait
+   (this rule follows .wd-collapse so it overrides its display for the shared element). */
+.wd-fullscreen {
+  display: none;
+}
+/* Hide-the-whole-ribbon toggle: revealed on touch devices only while a tab is collapsed (see the
+   shared coarse rule below), where it REPLACES the pane chevron so the whole menu can fold away. */
+.wd-hide-ribbon {
+  display: none;
+}
+@media (pointer: coarse) and (orientation: landscape) {
+  /* Landscape is the only place the fullscreen toggle earns its spot (the browser chrome eats the
+     scarce vertical space there). The collapse/hide-ribbon swap is shared with portrait, below. */
+  .wd-fullscreen {
+    display: grid;
+  }
+}
+/* Touch devices, BOTH orientations: collapsing a tab hides the pane chevron and reveals the ">"
+   hide-ribbon button in its place, so the whole menu folds away to the corner handle. Expanding a
+   tab again (tap a menu item) brings the pane chevron back and hides ">". Landscape additionally
+   keeps the fullscreen button (above); desktop shows neither extra. */
+@media (pointer: coarse) {
+  .wd-ribbon.collapsed .wd-collapse-pane {
+    display: none;
+  }
+  .wd-ribbon.collapsed .wd-hide-ribbon {
+    display: grid;
+  }
+}
+/* Folded away: the ribbon shrinks to just the restore handle floating at the bottom-right, so the
+   entire screen height is free. Everything but the toggle button is hidden. Applies in BOTH
+   orientations on touch devices (portrait reaches it via the collapsed-state ">" button). */
+@media (pointer: coarse) {
+  .wd-ribbon.ribbon-hidden {
+    left: auto;
+    right: 0;
+    /* hug the handle so the (now transparent) container never blocks taps on the screen behind it,
+       including the centered/width-capped desktop-ribbon layout above 820px. */
+    width: auto;
+    transform: none;
+    background: transparent;
+    border-top: none;
+    border: none;
+    box-shadow: none;
+  }
+  .wd-ribbon.ribbon-hidden .wd-options,
+  .wd-ribbon.ribbon-hidden .wd-tabs > :not(.wd-hide-ribbon) {
+    display: none;
+  }
+  .wd-ribbon.ribbon-hidden .wd-tabs {
+    padding: 6px;
+    justify-content: flex-end;
+  }
+  /* The restore handle must stay visible whenever the ribbon is hidden — including a device rotated
+     to portrait AFTER hiding it in landscape (where the pane may not be collapsed). */
+  .wd-ribbon.ribbon-hidden .wd-hide-ribbon {
+    display: grid;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    box-shadow: 0 -2px 10px var(--shadow);
+  }
+}
 
 /* buttons */
 .wd-btn {
@@ -482,6 +552,14 @@ textarea {
   white-space: nowrap;
 }
 .wd-btn svg {
+  flex: none;
+}
+/* Raster icon inside a button (e.g. the LashStash mark), sized to match the ~20px leading SVGs so
+   text buttons and icon-only buttons line up. */
+.wd-btn-icon-img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
   flex: none;
 }
 .wd-btn.wd-icon-only {
@@ -573,12 +651,52 @@ textarea {
   flex-wrap: wrap;
   justify-content: center;
 }
+/* Type action row: 1×/2×/3× + Whips + Insert + Send on ONE line, never wrapping. Buttons split
+   the width evenly and may shrink (min-width:0) — labels are kept terse in controls.ts so all six
+   fit even at ~320px. */
+/* textarea + the square Whipository button beside it (Type tab) */
+.wd-type-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.wd-type-input-row .wd-type-input {
+  flex: 1;
+  min-width: 0;
+}
+.wd-type-input-row .wd-whips-btn {
+  align-self: flex-start;
+}
+/* Whipository icon button: the raster mark fills the square button, matching the SVG icon buttons. */
+.wd-whips-btn img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  display: block;
+}
 .wd-type-actions {
   display: flex;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 4px;
 }
 .wd-type-actions .wd-btn {
   flex: 1;
+  min-width: 0;
+  padding: 6px 4px;
+  gap: 4px;
+  font-size: 12px;
+}
+.wd-type-actions .wd-btn svg {
+  flex-shrink: 0;
+}
+@media (min-width: 390px) {
+  .wd-type-actions {
+    gap: 6px;
+  }
+  .wd-type-actions .wd-btn {
+    padding: 6px 8px;
+    font-size: 13px;
+  }
 }
 
 /* monitor pane */
@@ -609,9 +727,25 @@ textarea {
   padding: 10px 12px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  pointer-events: auto; /* the container is pointer-events:none so the screen stays tappable */
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.wd-toast-glyph {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+}
+.wd-toast-content {
+  display: flex;
   flex-direction: column;
   gap: 2px;
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  min-width: 0;
+  flex: 1;
 }
 .wd-toast strong {
   font-size: 14px;
@@ -619,18 +753,46 @@ textarea {
 .wd-toast span {
   font-size: 13px;
   color: var(--muted);
+  word-break: break-word;
+}
+.wd-toast-close {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 2px;
+  margin: -2px -4px 0 0;
+  cursor: pointer;
+  border-radius: 6px;
+  line-height: 0;
+}
+.wd-toast-close:hover {
+  color: var(--fg, #fff);
+  background: rgba(127, 127, 127, 0.18);
 }
 .wd-toast.wd-success {
   border-left-color: var(--accent-2);
 }
+.wd-toast.wd-success .wd-toast-glyph {
+  color: var(--accent-2);
+}
 .wd-toast.wd-warning {
   border-left-color: var(--warn);
+}
+.wd-toast.wd-warning .wd-toast-glyph {
+  color: var(--warn);
 }
 .wd-toast.wd-error {
   border-left-color: var(--error);
 }
+.wd-toast.wd-error .wd-toast-glyph {
+  color: var(--error);
+}
 .wd-toast.wd-info {
   border-left-color: var(--accent);
+}
+.wd-toast.wd-info .wd-toast-glyph {
+  color: var(--accent);
 }
 .wd-toast.wd-hide {
   opacity: 0;
@@ -639,6 +801,31 @@ textarea {
 
 .hidden {
   display: none !important;
+}
+
+/* Tiny centered spinner shown while a requested re-crop hasn't gone live yet (encoder catching
+   up or recovering) — tells the user the sharp view is coming instead of looking broken. Its
+   visibility is fully driven from main.ts (armed >1.2s after an unconfirmed crop request, hidden
+   the moment the host reports the crop live, on disconnect, and by a 30s failsafe). */
+.wd-sharpen {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(235, 240, 248, 0.25);
+  border-top-color: rgba(235, 240, 248, 0.9);
+  box-shadow: 0 0 0 4px rgba(6, 9, 14, 0.35);
+  pointer-events: none;
+  z-index: 15;
+  animation: wd-sharpen-spin 0.9s linear infinite;
+}
+@keyframes wd-sharpen-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* PIN unlock overlay */
@@ -723,6 +910,63 @@ textarea {
   color: var(--text);
 }
 
+/* "you were away" resume gate (remote only) — same modal treatment as the PIN dialog. */
+.wd-resume {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 9, 14, 0.92);
+  backdrop-filter: blur(6px);
+  padding: 20px;
+}
+.wd-resume-card {
+  width: 100%;
+  max-width: 340px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 26px 24px;
+  text-align: center;
+}
+.wd-resume-whip {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 12px;
+}
+.wd-resume-card h2 {
+  margin: 0 0 8px;
+  font-size: 21px;
+}
+.wd-resume-msg {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.wd-resume-go {
+  width: 100%;
+  min-height: 50px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.wd-resume-go:active {
+  filter: brightness(0.92);
+  transform: translateY(1px);
+}
+.wd-resume-back {
+  margin-top: 14px;
+}
+
 /* "connecting…" overlay (first connect only) */
 .wd-connecting {
   position: absolute;
@@ -730,7 +974,8 @@ textarea {
   z-index: 18;
   display: grid;
   place-items: center;
-  background: rgba(6, 9, 14, 0.92);
+  /* Pure black to match the loading gif's own canvas (no visible box edge around it). */
+  background: rgba(0, 0, 0, 0.96);
   backdrop-filter: blur(6px);
   padding: 20px;
 }
@@ -739,25 +984,14 @@ textarea {
   max-width: 320px;
   text-align: center;
 }
-.wd-connecting-whip {
-  width: 56px;
-  height: 56px;
-  object-fit: contain;
+/* Animated whip gif (306x202, black canvas) — the loading animation itself, so no extra spinner. */
+.wd-connecting-anim {
+  width: 180px;
+  height: auto;
   display: block;
-  margin: 0 auto 18px;
-  /* Pivot from the bottom-left corner so the whip visibly swings like it's being cracked.
-     (A tiny ±4° bob made transform-origin look like it did nothing — the swing now reads.) */
-  transform-origin: left bottom;
-  animation: wd-whip-crack 1.4s ease-in-out infinite;
-}
-.wd-connecting-spinner {
-  width: 34px;
-  height: 34px;
   margin: 0 auto 16px;
-  border: 3px solid rgba(255, 255, 255, 0.22);
-  border-top-color: #4ea1ff;
-  border-radius: 50%;
-  animation: wd-spin 0.8s linear infinite;
+  background: #000;
+  border-radius: 10px;
 }
 .wd-connecting-msg {
   margin: 0;
@@ -766,25 +1000,17 @@ textarea {
   font-weight: 600;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
-@keyframes wd-spin {
-  to {
-    transform: rotate(360deg);
-  }
+/* Escape hatch back to the dashboard — hidden for the first seconds of a connect (fast, healthy
+ * handshakes never show it), then fades in as a quiet text link, never a competing button. */
+.wd-connecting-back {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+  margin-top: 22px;
 }
-@keyframes wd-whip-crack {
-  0%,
-  100% {
-    transform: rotate(-16deg);
-  }
-  40% {
-    transform: rotate(14deg);
-  }
-  55% {
-    transform: rotate(5deg);
-  }
-  70% {
-    transform: rotate(11deg);
-  }
+.wd-connecting-back.shown {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* change-alerts dialog */
@@ -805,6 +1031,10 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 16px;
+  /* Tall dialogs (e.g. the LashStash editor: step list + palette + actions) must never run off the
+     top/bottom of the screen where their buttons become unreachable — cap and scroll instead. */
+  max-height: 90vh;
+  overflow-y: auto;
 }
 .wd-dialog-head {
   display: flex;
@@ -831,22 +1061,16 @@ textarea {
   font-size: 13px;
   margin: 8px 0 12px;
 }
-.wd-help-intro {
-  margin: 0 0 6px;
+/* AI-monitoring fine print: detection is heuristic and can miss sessions — say so, tiny. */
+.wd-mon-caveat {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
 }
-.wd-help-list {
-  margin: 0 0 8px;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.wd-help-list strong {
-  color: var(--text);
-}
-.wd-help-note {
-  margin: 0;
-  font-style: italic;
+.wd-mon-caveat a {
+  color: inherit;
+  text-decoration: underline;
 }
 .wd-watch-list {
   display: flex;
@@ -924,12 +1148,69 @@ textarea {
   flex: 1;
   justify-content: center;
 }
-/* vertical action stack (the three Auto-Whip types) */
-.wd-dialog-actions.wd-actions-stack {
+/* Auto-Whips action rows: each action self-describes (icon + title + one-line description under it),
+   replacing the old explainer block + plain button stack. */
+.wd-action-rows {
+  display: flex;
   flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
 }
-.wd-actions-stack .wd-btn {
+.wd-action-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
   width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.wd-action-row:active {
+  background: var(--panel);
+  transform: translateY(1px);
+}
+/* The leading mark is green like the old "go" buttons so the rows still read as actions. */
+.wd-action-icon {
+  display: grid;
+  place-items: center;
+  color: var(--accent-2);
+}
+.wd-action-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.wd-action-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.wd-action-desc {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.wd-action-chevron {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+/* Hairline before the LashStash action: it's related to Auto-Whips but doesn't itself arm on-screen
+   work, so the rule sets it apart from the "do it now" options above. */
+.wd-actions-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
 }
 /* session-monitoring state badge */
 .wd-mon-state {
@@ -1179,6 +1460,41 @@ textarea {
   color: var(--text);
   word-break: break-word;
 }
+/* Machine row: name + pencil (rename). The pencil swaps into an inline input + ✓ save button. */
+.wd-conn-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wd-conn-edit {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.wd-conn-edit:hover {
+  color: var(--text);
+}
+.wd-conn-name-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
 .wd-conn-route {
   flex: 1;
   display: flex;
@@ -1210,6 +1526,17 @@ textarea {
   font-size: 12.5px;
   font-weight: 600;
   word-break: break-word;
+}
+/* HDR heads-up under the Machine row — informational amber, not an error */
+.wd-conn-hdr {
+  margin: 6px 0 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(255, 178, 44, 0.1);
+  border: 1px solid rgba(255, 178, 44, 0.45);
+  color: #ffb22c;
+  font-size: 12px;
+  font-weight: 600;
 }
 .wd-disconnect {
   width: 100%;
@@ -1249,6 +1576,16 @@ textarea {
   width: 14px;
   height: 14px;
   flex: none;
+}
+/* Always-visible support row in the connection dialog, centered above the feedback footer. */
+.wd-conn-support {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+.wd-conn-support .wd-support-link {
+  align-self: center;
+  margin-top: 0;
 }
 /* Feedback footer in the connection dialog — one short line + Reddit / GitHub buttons. */
 .wd-conn-feedback {
@@ -1365,6 +1702,145 @@ textarea {
 .wd-place-text {
   width: 100%;
 }
+/* prompt textarea + the tiny Whipository button beside it (scheduled-work text entry) */
+.wd-place-text-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.wd-place-text-row .wd-place-text {
+  flex: 1;
+  min-width: 0;
+}
+.wd-place-whips {
+  align-self: flex-start;
+}
+
+/* Whipository — saved reusable prompts ("whips") */
+/* Must beat the placement layer/bar (z 40–42): one of its openers sits ON the placement bar. */
+.wd-whips-overlay {
+  z-index: 45;
+}
+.wd-whips-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.wd-whip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.wd-whip-text {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: left;
+  padding: 4px 0;
+  cursor: pointer;
+  /* Long prompts stay a 2-line teaser — the row is a picker, not a reader. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wd-whip-text:active {
+  color: var(--accent);
+}
+.wd-whips-editor-host {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.wd-whips-count {
+  align-self: flex-end;
+  color: var(--muted);
+  font-size: 12px;
+}
+.wd-whips-where {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+/* Dialog header: brand icon + title on the left, small action buttons (＋ / ×) on the right. */
+.wd-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.wd-dialog-title-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  flex: none;
+}
+.wd-dialog-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.wd-whips-add {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px;
+}
+/* Inline "Delete this whip?" confirmation that temporarily replaces a row's buttons. */
+.wd-whip-confirm {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.wd-whip-confirm-btn {
+  min-height: 32px;
+  min-width: auto;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.wd-btn.wd-danger {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+/* Full-text preview overlay sits above the whips list (z 45). */
+.wd-whip-preview-overlay {
+  z-index: 46;
+}
+/* Back-button confirm sits above every other dialog — it's a top-level "leave this session?". */
+.wd-backguard {
+  z-index: 60;
+}
+.wd-whip-preview-text {
+  margin: 10px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 45vh;
+  overflow-y: auto;
+}
 .wd-place-buttons {
   display: flex;
   gap: 8px;
@@ -1379,7 +1855,8 @@ textarea {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  margin-bottom: 12px;
+  /* Sits directly under the dialog header (the old explainer block used to provide this gap). */
+  margin: 12px 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel-2);
@@ -1482,4 +1959,204 @@ textarea {
   line-height: 1.35;
   text-align: center;
   pointer-events: none;
+}
+
+/* LashStash — saved multi-step automations ("lashes") */
+/* The brand mark slot in the dialog title (SVG placeholder until a raster mark lands). */
+.wd-lash-mark {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  flex: none;
+}
+/* "What to do" dropdown + the square LashStash button on one line. */
+.wd-lash-pickrow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.wd-lash-pickrow .wd-input {
+  flex: 1;
+  min-width: 0;
+}
+.wd-lash-pickrow .wd-lash-btn {
+  flex: none;
+  color: var(--accent);
+}
+/* A lash row: name + one-line step teaser on the left (opens the detail view), actions right. */
+.wd-lash-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.wd-lash-main:active .wd-lash-title {
+  color: var(--accent);
+}
+.wd-lash-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wd-lash-sub {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Numbered step list (detail view + editor). */
+.wd-lash-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+.wd-lash-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.wd-lash-step-num {
+  flex: none;
+  width: 16px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.wd-lash-step-desc {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wd-lash-step .wd-btn {
+  min-width: 30px;
+  min-height: 30px;
+  width: 30px;
+  height: 30px;
+  padding: 3px;
+}
+.wd-lash-step .wd-btn:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+/* Per-row controls: insert-after / move up / move down / delete, kept on one line (the description
+   ellipsizes) so reordering and mid-list inserts are one tap each. */
+.wd-lash-step-ctl {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* Brief accent flash so a newly added or inserted step visibly "lands" in the list. */
+@keyframes wd-lash-pop {
+  0% {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  100% {
+    background: var(--panel-2);
+    border-color: var(--border);
+  }
+}
+.wd-lash-step-new {
+  animation: wd-lash-pop 0.9s ease-out;
+}
+/* "Inserting before step N" banner — shown only while a mid-list insert position is armed. */
+.wd-lash-insert-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 5px 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel-2);
+  margin-bottom: 8px;
+}
+.wd-lash-insert-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+.wd-lash-insert-x {
+  min-width: 30px;
+  min-height: 30px;
+  width: 30px;
+  height: 30px;
+  padding: 3px;
+}
+.wd-lash-chips {
+  margin-bottom: 8px;
+}
+.wd-lash-subform {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+/* Floating "Executing “name” in 3…2…1" card — above every dialog, backdrop stays clickable. */
+.wd-exec-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 46;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.wd-exec-card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  padding: 16px 20px;
+  box-shadow: 0 10px 30px var(--shadow);
+  max-width: 86%;
+}
+.wd-exec-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.wd-exec-label svg {
+  flex: none;
+  color: var(--accent);
+}
+.wd-exec-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex: none;
 }

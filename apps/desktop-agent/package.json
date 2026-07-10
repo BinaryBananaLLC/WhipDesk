@@ -1,10 +1,10 @@
 {
   "name": "whipdesk",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "WhipDesk desktop host: screen capture, input injection, notification hub, and the HTTP/WebSocket server that serves the mobile client.",
   "license": "AGPL-3.0",
-  "homepage": "https://github.com/BinaryBananaLLC/WhipDesk#readme",
+  "homepage": "https://whipdesk.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/BinaryBananaLLC/WhipDesk.git",
@@ -15,7 +15,8 @@
   },
   "files": [
     "dist/agent.cjs",
-    "dist/mobile-web"
+    "dist/mobile-web",
+    "README.md"
   ],
   "engines": {
     "node": ">=20"
@@ -34,26 +35,30 @@
     "prepublishOnly": "node scripts/build-bundle.mjs"
   },
   "dependencies": {
-    "@whipdesk/protocol": "*",
     "express": "^5.2.1",
     "ffmpeg-static": "^5.3.0",
     "qrcode-terminal": "^0.12.0",
-    "screenshot-desktop": "^1.15.1",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
     "@nut-tree-fork/nut-js": "^4.2.0",
+    "screenshot-desktop": "^1.15.1",
     "sharp": "^0.35.3",
     "werift": "^0.23.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.1.0",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/ws": "^8.5.12",
+    "@whipdesk/protocol": "*",
     "esbuild": "^0.28.1",
     "postject": "^1.0.0-alpha.6",
+<<<<<<< HEAD
     "tsx": "^4.19.2",
+=======
+    "tsx": "^4.22.5",
+>>>>>>> origin/main
     "typescript": "^6.0.3"
   }
 }

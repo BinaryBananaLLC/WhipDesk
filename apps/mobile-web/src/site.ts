@@ -43,8 +43,8 @@ export function signInUrl(next?: string): string {
 }
 
 /**
- * Donation link. TURN relay traffic costs real money; the connection dialog invites support here.
- * TEST-mode Stripe link for now — swap for the live link before launch.
+ * Live Stripe donation link. TURN relay traffic costs real money; the connection dialog invites
+ * support here. Keep in sync with the marketing site's src/lib/links.ts.
  */
 export const DONATE_URL = "https://donate.stripe.com/6oU5kE19N5v35652n88so01";
 

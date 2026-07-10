@@ -14,9 +14,13 @@ export type IconName =
   | "minus"
   | "chevron-down"
   | "chevron-up"
+  | "chevron-left"
+  | "chevron-right"
   | "pointer"
   | "scroll-up"
   | "scroll-down"
+  | "page-up"
+  | "page-down"
   | "mouse-left"
   | "mouse-right"
   | "double-click"
@@ -25,11 +29,18 @@ export type IconName =
   | "insert"
   | "lock"
   | "clock"
+  | "play"
+  | "zap"
   | "power"
   | "activity"
   | "x"
+  | "check"
   | "heart"
   | "trash"
+  | "book"
+  | "pencil"
+  | "fullscreen"
+  | "fullscreen-exit"
   | "github"
   | "reddit";
 
@@ -45,22 +56,37 @@ const PATHS: Record<IconName, string> = {
   minus: '<path d="M5 12h14"/>',
   "chevron-down": '<path d="m6 9 6 6 6-6"/>',
   "chevron-up": '<path d="m6 15 6-6 6 6"/>',
+  "chevron-left": '<path d="m15 6-6 6 6 6"/>',
+  "chevron-right": '<path d="m9 6 6 6-6 6"/>',
   pointer: '<path d="m4 4 6 16 2.5-6.5L19 11Z"/>',
   "scroll-up": '<path d="m6 14 6-6 6 6"/><path d="M12 8v11"/>',
   "scroll-down": '<path d="m6 10 6 6 6-6"/><path d="M12 16V5"/>',
+  // Like scroll-up/down with a bar: jump a whole page toward the top/bottom.
+  "page-up": '<path d="M5 4h14"/><path d="m7 13 5-5 5 5"/><path d="M12 9v11"/>',
+  "page-down": '<path d="M5 20h14"/><path d="m7 11 5 5 5-5"/><path d="M12 15V4"/>',
   "mouse-left": '<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v8H6V8"/>',
   "mouse-right": '<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v8h6V8"/>',
   "double-click": '<path d="m4 4 6 16 2.5-6.5L19 11Z"/><path d="M18 4v3M21 6h-3"/>',
   drag: '<path d="M12 2v20M2 12h20" /><path d="m8 6 4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>',
   send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4Z"/>',
-  insert: '<path d="M12 5v14M5 12h7"/><rect x="16" y="4" width="4" height="16" rx="1"/>',
+  // Arrow dropping down into an open text field — reads as "insert this into the box you're typing in".
+  insert: '<path d="M12 3v8m-3.5-3.5L12 11l3.5-3.5"/><path d="M5 14v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  play: '<path d="M7 4.5v15l13-7.5Z"/>',
+  // Lightning bolt = LashStash (execute a stored automation). Placeholder until a raster mark lands.
+  zap: '<path d="M13 2 3 14h7l-1 8 11-14h-7l1-6Z"/>',
   power: '<path d="M12 3v9"/><path d="M6.4 7.4a8 8 0 1 0 11.2 0"/>',
   activity: '<path d="M3 12h4l2-7 4 14 2-7h6"/>',
   x: '<path d="M6 6 18 18M18 6 6 18"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
   heart: '<path d="M12 20s-7-4.4-9.3-8.5a4.5 4.5 0 0 1 8.1-3.9l1.2 1.6 1.2-1.6a4.5 4.5 0 0 1 8.1 3.9C19 15.6 12 20 12 20Z"/>',
   trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>',
+  book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/>',
+  pencil: '<path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
+  // Corner brackets pointing out = enter fullscreen; pointing in = exit fullscreen.
+  fullscreen: '<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  "fullscreen-exit": '<path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/>',
   // Brand marks: solid glyphs, so they override the icon set's stroke styling with their own fill.
   github:
     '<path fill="currentColor" stroke="none" d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.25 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 24 12.5C24 5.87 18.63.5 12 .5Z"/>',

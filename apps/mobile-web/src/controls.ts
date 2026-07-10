@@ -4,8 +4,11 @@ import type { InputController } from "./input";
 import type { Notifications } from "./notifications";
 import type { ScreenView } from "./screen";
 import type { RegionWatchers } from "./watchers";
+import type { Whipository } from "./whipository";
 import { icon, type IconName } from "./icons";
 import { DONATE_URL, GITHUB_URL, REDDIT_URL, dashboardUrl } from "./site";
+import whipositoryMark from "./assets/whipository.png";
+import autoWhipsIcon from "./assets/auto-whips-icon.png";
 
 interface Deps {
   conn: ControllerTransport;
@@ -13,6 +16,7 @@ interface Deps {
   input: InputController;
   notifications: Notifications;
   watchers: RegionWatchers;
+  whipository: Whipository;
 }
 
 type Tab = "viewer" | "interact" | "type" | "monitor";
@@ -88,6 +92,21 @@ function iconBtn(name: IconName, label = "", className = "wd-btn"): HTMLButtonEl
   return b;
 }
 
+/** Square, icon-only button using the Whipository mark (raster art, so it's an <img>, not an SVG
+ * from the icon set). Used next to any prompt box that a whip can be inserted into. */
+function whipButton(onClick: () => void): HTMLButtonElement {
+  const b = el("button", "wd-btn wd-icon-only wd-whips-btn");
+  const img = document.createElement("img");
+  img.src = whipositoryMark;
+  img.alt = "";
+  img.decoding = "async";
+  b.appendChild(img);
+  b.title = "Whipository — insert a saved prompt";
+  b.setAttribute("aria-label", "Insert a saved prompt");
+  b.onclick = onClick;
+  return b;
+}
+
 /** An icon + label anchor that opens an external page (Reddit/GitHub) safely in a new tab. */
 function feedbackLink(name: IconName, label: string, href: string): HTMLAnchorElement {
   const a = el("a", "wd-conn-feedback-link");
@@ -124,9 +143,9 @@ function transportLabel(t: string): string {
  * The mobile UI: a top status bar + a collapsible bottom ribbon with one tab per task.
  * Only the active tab's controls are shown, so buttons never stack or overlap.
  *
- *  - Viewer:   look around safely — zoom −/+, Click (no accidental clicks), scroll.
- *  - Interact: full control — Mouse|Touch segment, then Left/Right/Double/Drag/Scroll.
+ *  - Browse:   zoom −/+, pan, scroll/page; tap the screen to click, just like the real device.
  *  - Type:     write text — textarea + special keys + Insert (no Enter) / Send (Enter).
+ *  - Interact: full control — Mouse|Touch segment, then Left/Right/Double/Drag/Scroll.
  *  - Monitor:  pick which display to view + control.
  *
  * A chevron collapses the whole ribbon to a slim handle to free the screen.
@@ -147,6 +166,8 @@ export class Controls {
   private connStatusDot!: HTMLElement;
   private connStatusText!: HTMLElement;
   private connError!: HTMLElement;
+  private connHdr!: HTMLElement;
+  private hostHdr = false;
   private lastError = "";
   private netFps = 0;
   private netRtt: number | null = null;
@@ -156,6 +177,9 @@ export class Controls {
   private readonly tabButtons = new Map<Tab, HTMLButtonElement>();
   private readonly tabPanes = new Map<Tab, HTMLElement>();
   private collapseBtn!: HTMLButtonElement;
+  private hideRibbonBtn!: HTMLButtonElement;
+  private ribbon!: HTMLElement;
+  private fullscreenBtn: HTMLButtonElement | null = null;
   private interactHost!: HTMLElement;
 
   private monitorList!: HTMLElement;
@@ -164,6 +188,7 @@ export class Controls {
   private activeTab: Tab | null = null;
   private interactMode: "mouse" | "touch" = "mouse";
   private collapsed = false;
+  private ribbonHidden = false;
   private deviceName = "";
   private transport = "";
   private presenceCount = 1;
@@ -237,6 +262,7 @@ export class Controls {
 
   setWelcome(w: WelcomeMessage): void {
     this.deviceName = w.agent.hostname;
+    this.hostHdr = !!w.agent.hdr;
     this.renderStatusText();
     this.displays = w.displays ?? [];
     this.activeDisplay = w.activeDisplay ?? 0;
@@ -288,10 +314,26 @@ export class Controls {
     statusVal.append(this.connStatusDot, this.connStatusText);
     statusRow.appendChild(statusVal);
 
+    // Machine row: name + a small pencil to rename it. The new name is persisted BY THE AGENT
+    // (its state dir), so it sticks across restarts and shows up everywhere — status pill,
+    // dashboard card, this dialog — not just in this browser.
     const nameRow = el("div", "wd-conn-row");
     nameRow.append(el("span", "wd-conn-label", "Machine"));
     this.connName = el("span", "wd-conn-value", "—");
-    nameRow.appendChild(this.connName);
+    const nameWrap = el("div", "wd-conn-name");
+    const editName = el("button", "wd-conn-edit");
+    editName.appendChild(icon("pencil", 14));
+    editName.title = "Rename this machine";
+    editName.setAttribute("aria-label", "Rename this machine");
+    editName.onclick = () => this.beginRenameMachine(nameWrap, editName);
+    nameWrap.append(this.connName, editName);
+    nameRow.appendChild(nameWrap);
+
+    // Heads-up when the HOST desktop runs in HDR: the agent tone-maps the stream to SDR, but it
+    // can still look washed compared to the real screen — say so here instead of looking broken.
+    this.connHdr = el("div", "wd-conn-hdr hidden");
+    this.connHdr.textContent =
+      "HDR monitor detected — the image may look washed out. Turn HDR off on that machine if you see issues.";
 
     const routeRow = el("div", "wd-conn-row");
     routeRow.append(el("span", "wd-conn-label", "Connection"));
@@ -314,6 +356,14 @@ export class Controls {
     disconnect.append(icon("power"), el("span", "wd-btn-label", "Disconnect"));
     disconnect.onclick = () => this.disconnect();
 
+    // Donate/support: ALWAYS visible in this dialog (it used to appear only on TURN sessions —
+    // relay users are the costly ones, but everyone should be able to find the button).
+    const support = el("div", "wd-conn-support");
+    const donate = el("button", "wd-support-link");
+    donate.append(icon("heart", 14), el("span", undefined, "Support WhipDesk"));
+    donate.onclick = () => window.open(DONATE_URL, "_blank", "noopener");
+    support.appendChild(donate);
+
     // Found a bug or have an idea? This dialog is where engaged users land, so it's a natural place
     // to invite reports and point them at the community/repo. Kept to a single line + two buttons so
     // it stays compact and translates cleanly (no idioms).
@@ -326,8 +376,8 @@ export class Controls {
     );
     feedback.appendChild(links);
 
-    // Row order: Status, Connection, Speed, Machine, Viewers.
-    card.append(head, statusRow, routeRow, speedRow, nameRow, viewersRow, this.connError, disconnect, feedback);
+    // Row order: Status, Connection, Speed, Machine (+HDR note), Viewers.
+    card.append(head, statusRow, routeRow, speedRow, nameRow, this.connHdr, viewersRow, this.connError, disconnect, support, feedback);
     overlay.appendChild(card);
     this.root.appendChild(overlay);
     this.connectionOverlay = overlay;
@@ -344,6 +394,7 @@ export class Controls {
       this.connError.classList.add("hidden");
     }
     this.connName.textContent = this.deviceName || "Connected device";
+    this.connHdr.classList.toggle("hidden", !this.hostHdr);
     this.connPresence.textContent = String(Math.max(1, this.presenceCount));
     this.connRoute.replaceChildren();
     if (this.transport) {
@@ -351,14 +402,8 @@ export class Controls {
       badge.textContent = transportLabel(this.transport);
       badge.dataset.kind = this.transport.toLowerCase();
       this.connRoute.append(badge, el("span", "wd-conn-desc", transportDesc(this.transport)));
-      // Relay (TURN) traffic costs us real money — so right where the description says "Consider
-      // supporting us", drop the donate button into the Connection value field.
-      if (this.transport.toLowerCase() === "turn") {
-        const donate = el("button", "wd-support-link");
-        donate.append(icon("heart", 14), el("span", undefined, "Support WhipDesk"));
-        donate.onclick = () => window.open(DONATE_URL, "_blank", "noopener");
-        this.connRoute.append(donate);
-      }
+      // The donate button lives in the dialog footer (always visible, every transport) — the TURN
+      // description's "Consider supporting us" points at it.
     } else {
       this.connRoute.append(el("span", "wd-conn-desc", this.status === "connected" ? "Detecting route…" : "Connecting…"));
     }
@@ -375,6 +420,45 @@ export class Controls {
     this.netFps = fps;
     this.netRtt = rtt;
     if (this.connectionOverlay && !this.connectionOverlay.classList.contains("hidden")) this.renderSpeed();
+  }
+
+  /** Swap the Machine row's value into an inline editor (input + save). Enter saves, Esc cancels. */
+  private beginRenameMachine(wrap: HTMLElement, editBtn: HTMLButtonElement): void {
+    const input = el("input", "wd-conn-name-input");
+    input.type = "text";
+    input.maxLength = 64;
+    input.value = this.deviceName;
+    input.placeholder = "Machine name";
+    const done = () => wrap.replaceChildren(this.connName, editBtn);
+    const save = el("button", "wd-conn-edit");
+    save.appendChild(icon("check", 14));
+    save.title = "Save name";
+    save.setAttribute("aria-label", "Save name");
+    const commit = () => {
+      const name = input.value.trim().slice(0, 64);
+      done();
+      if (!name || name === this.deviceName) return;
+      // Optimistic update; the agent persists the name and echoes a machine-name broadcast so
+      // every other connected controller updates too.
+      this.deps.conn.send({ type: "rename-machine", name });
+      this.setDeviceName(name);
+    };
+    save.onclick = commit;
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") commit();
+      else if (e.key === "Escape") done();
+    };
+    wrap.replaceChildren(input, save);
+    input.focus();
+    input.select();
+  }
+
+  /** Update the machine's display name everywhere (status pill + connection dialog). */
+  setDeviceName(name: string): void {
+    if (!name || name === this.deviceName) return;
+    this.deviceName = name;
+    this.renderStatusText();
+    if (this.connectionOverlay && !this.connectionOverlay.classList.contains("hidden")) this.renderConnection();
   }
 
   private openConnection(): void {
@@ -413,15 +497,25 @@ export class Controls {
     this.statusbar = status;
     this.buildConnectionDialog();
 
-    const bell = iconBtn("bell", "", "wd-bell");
-    bell.setAttribute("aria-label", "Auto-Whips");
-    bell.title = "Auto-Whips";
-    bell.appendChild(this.alertBadge);
-    bell.onclick = () => this.deps.watchers.open();
-    this.root.append(status, bell);
+    // Auto-Whips button: the Auto-Whips mark, not a notification bell — the dialog is about
+    // putting agents to work automatically (scheduled work, alerts, AI monitoring), not about
+    // notification settings.
+    const autoWhips = el("button", "wd-bell");
+    const whipImg = document.createElement("img");
+    whipImg.src = autoWhipsIcon;
+    whipImg.alt = "";
+    whipImg.decoding = "async";
+    whipImg.className = "wd-whip-mark";
+    autoWhips.appendChild(whipImg);
+    autoWhips.setAttribute("aria-label", "Auto-Whips");
+    autoWhips.title = "Auto-Whips";
+    autoWhips.appendChild(this.alertBadge);
+    autoWhips.onclick = () => this.deps.watchers.open();
+    this.root.append(status, autoWhips);
 
     // --- bottom ribbon ---
     const ribbon = el("div", "wd-ribbon");
+    this.ribbon = ribbon;
     this.panel = el("div", "wd-panel");
     this.optionsArea = el("div", "wd-options");
 
@@ -440,14 +534,37 @@ export class Controls {
       this.tabButtons.set(tab, b);
       tabs.appendChild(b);
     };
-    addTab("viewer", "eye", "Viewer");
-    addTab("interact", "mouse", "Interact");
+    addTab("viewer", "eye", "Browse");
     addTab("type", "keyboard", "Type");
+    addTab("interact", "mouse", "Interact");
     addTab("monitor", "monitor", "Monitor");
 
-    this.collapseBtn = iconBtn("chevron-down", "", "wd-collapse");
+    // Fullscreen toggle — CSS reveals it only on a touch device in landscape, where the browser
+    // chrome eats scarce vertical space (see .wd-fullscreen). Skipped entirely where the Fullscreen
+    // API isn't usable on an element (notably iOS Safari, which only fullscreens <video>), so we
+    // never show a dead button. Sits between Monitor and the collapse chevron.
+    if (this.fullscreenSupported()) {
+      this.fullscreenBtn = iconBtn("fullscreen", "", "wd-collapse wd-fullscreen");
+      this.fullscreenBtn.setAttribute("aria-label", "Toggle fullscreen");
+      this.fullscreenBtn.title = "Fullscreen";
+      this.fullscreenBtn.onclick = () => this.toggleFullscreen();
+      tabs.appendChild(this.fullscreenBtn);
+      document.addEventListener("fullscreenchange", () => this.syncFullscreenBtn());
+    }
+
+    this.collapseBtn = iconBtn("chevron-down", "", "wd-collapse wd-collapse-pane");
     this.collapseBtn.onclick = () => this.setCollapsed(!this.collapsed);
     tabs.appendChild(this.collapseBtn);
+
+    // Hide-the-whole-ribbon toggle — on touch devices it appears once the pane is collapsed (in
+    // BOTH orientations now) and REPLACES the pane chevron, so the whole menu can be folded away to
+    // the corner handle. ">" folds the entire ribbon away to a slim handle on the right edge; "<"
+    // brings it back. Landscape also keeps the fullscreen button; desktop shows neither extra.
+    this.hideRibbonBtn = iconBtn("chevron-right", "", "wd-collapse wd-hide-ribbon");
+    this.hideRibbonBtn.setAttribute("aria-label", "Hide the whole ribbon");
+    this.hideRibbonBtn.title = "Hide toolbar";
+    this.hideRibbonBtn.onclick = () => this.setRibbonHidden(!this.ribbonHidden);
+    tabs.appendChild(this.hideRibbonBtn);
 
     this.panel.append(this.optionsArea, tabs);
     ribbon.appendChild(this.panel);
@@ -457,7 +574,8 @@ export class Controls {
   }
 
   private buildViewerPane(): HTMLElement {
-    const { view, input } = this.deps;
+    const { view, input, conn } = this.deps;
+    // No Click button: tapping the screen clicks directly in every tab (see InputController).
     const pane = el("div", "wd-pane wd-pane-single-row");
 
     const zoomOut = holdBtn(iconBtn("minus", "", "wd-btn wd-icon-only"), () => view.zoomBy(0.9));
@@ -465,6 +583,17 @@ export class Controls {
 
     const scrollUp = holdBtn(iconBtn("scroll-up", "", "wd-btn wd-icon-only"), () => input.scrollStep(-6));
     const scrollDown = holdBtn(iconBtn("scroll-down", "", "wd-btn wd-icon-only"), () => input.scrollStep(6));
+    // Page Up/Down ride the key channel (supported by every input backend on win/mac/linux).
+    const pageUp = holdBtn(iconBtn("page-up", "", "wd-btn wd-icon-only"), () =>
+      conn.send({ type: "key", key: "PageUp" }),
+    );
+    pageUp.setAttribute("aria-label", "Page up");
+    pageUp.title = "Page up";
+    const pageDown = holdBtn(iconBtn("page-down", "", "wd-btn wd-icon-only"), () =>
+      conn.send({ type: "key", key: "PageDown" }),
+    );
+    pageDown.setAttribute("aria-label", "Page down");
+    pageDown.title = "Page down";
     const dragScroll = iconBtn("hand", "", "wd-btn wd-icon-only");
     dragScroll.setAttribute("aria-label", "Drag to scroll");
     dragScroll.title = "Drag to scroll";
@@ -487,14 +616,10 @@ export class Controls {
       dragScroll.classList.toggle("on", input.getDragScroll()); // mutually exclusive
     };
 
-    const click = iconBtn("pointer", "Click", "wd-btn wd-go");
-    click.onclick = () => input.click("left");
-
     pane.append(
       group("Zoom", zoomOut, zoomIn),
       group("Pan", pan),
-      group("Scroll", scrollUp, scrollDown, dragScroll),
-      group("Pointer", click),
+      group("Scroll", scrollUp, scrollDown, pageUp, pageDown, dragScroll),
     );
     return pane;
   }
@@ -576,25 +701,57 @@ export class Controls {
     this.promptInput.placeholder = "Type to send to the focused app (URL, command, message…)";
     this.promptInput.rows = 2;
 
-    // All buttons wrap together so no single button takes a whole row.
-    const buttons = el("div", "wd-wrap");
+    // The Whipository button lives right next to the box it injects into (on the right), so it's
+    // obvious the saved whip lands in THIS textarea — not straight on the host. Same square-icon
+    // treatment as the scheduled-work prompt entry.
+    const inputRow = el("div", "wd-type-input-row");
+    const whipsBeside = whipButton(() => this.deps.whipository.open((text) => this.insertIntoPrompt(text)));
+    inputRow.append(this.promptInput, whipsBeside);
+
+    // Special keys wrap together so no single key takes a whole row.
+    const keys = el("div", "wd-wrap");
     for (const [label, key] of SPECIAL_KEYS) {
       const b = btn(label);
       b.onclick = () => conn.send({ type: "key", key });
-      buttons.appendChild(b);
+      keys.appendChild(b);
     }
-    const dbl = btn("Double-click");
+
+    // Action row: 1×/2×/3× click + Whips + Insert + Send share ONE nowrap row, so the labels are
+    // deliberately terse (full names live in title/aria). 1× is here so a quick focus-click before
+    // typing (select a field, dismiss a popup) never forces a tab switch away from Type.
+    const actions = el("div", "wd-type-actions");
+    const single = iconBtn("pointer", "1×");
+    single.title = "Click";
+    single.setAttribute("aria-label", "Click");
+    single.onclick = () => input.click("left");
+    const dbl = iconBtn("double-click", "2×");
+    dbl.title = "Double-click";
+    dbl.setAttribute("aria-label", "Double-click");
     dbl.onclick = () => input.multiClick(2);
-    const triple = btn("Triple-click");
+    const triple = iconBtn("double-click", "3×");
+    triple.title = "Triple-click";
+    triple.setAttribute("aria-label", "Triple-click");
     triple.onclick = () => input.multiClick(3);
     const insert = iconBtn("insert", "Insert");
     insert.onclick = () => this.sendText(false);
     const send = iconBtn("send", "Send", "wd-btn wd-go");
     send.onclick = () => this.sendText(true);
-    buttons.append(dbl, triple, insert, send);
+    // Whipository now lives beside the textarea (inputRow) instead of in this action row.
+    actions.append(single, dbl, triple, insert, send);
 
-    pane.append(this.promptInput, buttons);
+    pane.append(inputRow, keys, actions);
     return pane;
+  }
+
+  /** Insert whip text at the cursor of the Type textarea (replacing any selection). */
+  private insertIntoPrompt(text: string): void {
+    const ta = this.promptInput;
+    const start = ta.selectionStart ?? ta.value.length;
+    const end = ta.selectionEnd ?? start;
+    ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+    const pos = start + text.length;
+    ta.setSelectionRange(pos, pos);
+    ta.focus();
   }
 
   private buildMonitorPane(): HTMLElement {
@@ -612,8 +769,10 @@ export class Controls {
       this.monitorList.appendChild(el("span", "wd-hint", "Single display"));
       return;
     }
-    this.displays.forEach((d, i) => {
-      const label = `${i + 1}. ${d.name}${d.primary ? " ★" : ""}`;
+    this.displays.forEach((d) => {
+      // The host already provides friendly names ("Display 1", monitor models, …), so show them
+      // as-is with a star for the primary — no redundant leading index.
+      const label = `${d.name}${d.primary ? " ★" : ""}`;
       const b = btn(label);
       b.classList.toggle("on", d.id === this.activeDisplay);
       b.onclick = () => {
@@ -635,16 +794,61 @@ export class Controls {
     for (const [key, b] of this.tabButtons) b.classList.toggle("on", key === tab);
     for (const [key, pane] of this.tabPanes) pane.classList.toggle("hidden", key !== tab);
 
-    // Map the tab to an interaction model. Interact uses the currently selected mode;
-    // the other tabs only aim the pointer (no accidental clicks from screen taps).
+    // Map the tab to an interaction model. Interact uses the currently selected mode; the other
+    // tabs use "viewer", where a tap also clicks directly (double/triple taps = double/triple
+    // clicks) unless the Pan or drag-to-scroll tool is active.
     this.deps.input.setInteraction(tab === "interact" ? this.interactMode : "viewer");
     if (tab === "type") window.setTimeout(() => this.promptInput.focus(), 50);
+  }
+
+  /** True when the browser can fullscreen an element (excludes iOS Safari, which only does <video>). */
+  private fullscreenSupported(): boolean {
+    const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: unknown };
+    return typeof el.requestFullscreen === "function" || typeof el.webkitRequestFullscreen === "function";
+  }
+
+  private fullscreenElement(): Element | null {
+    const doc = document as Document & { webkitFullscreenElement?: Element };
+    return document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+  }
+
+  private toggleFullscreen(): void {
+    const doc = document as Document & { webkitExitFullscreen?: () => void };
+    const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+    if (this.fullscreenElement()) {
+      if (document.exitFullscreen) void document.exitFullscreen().catch(() => {});
+      else doc.webkitExitFullscreen?.();
+    } else if (el.requestFullscreen) {
+      void el.requestFullscreen().catch(() => {});
+    } else {
+      el.webkitRequestFullscreen?.();
+    }
+    this.syncFullscreenBtn();
+  }
+
+  /** Swap the button glyph between enter/exit as fullscreen state changes. */
+  private syncFullscreenBtn(): void {
+    if (!this.fullscreenBtn) return;
+    const on = !!this.fullscreenElement();
+    this.fullscreenBtn.replaceChildren(icon(on ? "fullscreen-exit" : "fullscreen"));
+    this.fullscreenBtn.title = on ? "Exit fullscreen" : "Fullscreen";
   }
 
   private setCollapsed(collapsed: boolean): void {
     this.collapsed = collapsed;
     this.optionsArea.classList.toggle("hidden", collapsed);
+    // Mirrored on the ribbon so CSS can swap the pane chevron for the hide-ribbon toggle in portrait.
+    this.ribbon.classList.toggle("collapsed", collapsed);
     this.collapseBtn.replaceChildren(icon(collapsed ? "chevron-up" : "chevron-down"));
+  }
+
+  private setRibbonHidden(hidden: boolean): void {
+    this.ribbonHidden = hidden;
+    this.ribbon.classList.toggle("ribbon-hidden", hidden);
+    // ">" folds it away; the lone "<" handle brings it back.
+    this.hideRibbonBtn.replaceChildren(icon(hidden ? "chevron-left" : "chevron-right"));
+    this.hideRibbonBtn.title = hidden ? "Show toolbar" : "Hide toolbar";
+    this.hideRibbonBtn.setAttribute("aria-label", hidden ? "Show the ribbon" : "Hide the whole ribbon");
   }
 
   private sendText(submit: boolean): void {

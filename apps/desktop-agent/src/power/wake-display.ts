@@ -40,12 +40,13 @@ export class DisplayWake {
     }
   }
 
-  /** Turn the display on right now (best-effort, never throws). */
-  wake(): void {
+  /** Turn the display on right now (best-effort, never throws). `holdSeconds` keeps it on that
+   * long on macOS (scheduled actions need the panel up for the whole wake→click→type sequence). */
+  wake(holdSeconds = 5): void {
     try {
       switch (platform()) {
         case "darwin":
-          spawn("caffeinate", ["-u", "-t", "5"], { stdio: "ignore" }).unref();
+          spawn("caffeinate", ["-u", "-t", String(holdSeconds)], { stdio: "ignore" }).unref();
           break;
         case "win32":
           spawn("powershell", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", WINDOWS_WAKE], {

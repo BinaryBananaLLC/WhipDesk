@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +52,32 @@ function loadOrCreateToken(): string {
     /* non-fatal: token simply won't persist */
   }
   return token;
+}
+
+// User-chosen display name for this machine (set from the controller's connection dialog).
+// Persisted next to the token so it survives updates; empty/missing means "use the OS hostname".
+const MACHINE_NAME_MAX = 64;
+
+export function loadMachineName(dir: string): string {
+  try {
+    return readFileSync(join(dir, "machine-name"), "utf8").trim().slice(0, MACHINE_NAME_MAX);
+  } catch {
+    return "";
+  }
+}
+
+export function saveMachineName(dir: string, name: string): void {
+  const clean = name.trim().slice(0, MACHINE_NAME_MAX);
+  try {
+    if (!clean) {
+      rmSync(join(dir, "machine-name"), { force: true }); // back to the OS hostname
+      return;
+    }
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "machine-name"), clean, "utf8");
+  } catch {
+    /* non-fatal: the rename simply won't survive a restart */
+  }
 }
 
 export function loadConfig(): AgentConfig {

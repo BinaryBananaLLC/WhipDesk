@@ -14,9 +14,8 @@
     "isolatedModules": true,
     "declaration": true,
     "sourceMap": true,
-    "baseUrl": ".",
     "paths": {
-      "@whipdesk/protocol": ["packages/protocol/src/index.ts"]
+      "@whipdesk/protocol": ["./packages/protocol/src/index.ts"]
     }
   }
 }

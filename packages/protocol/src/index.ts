@@ -230,12 +230,72 @@ export interface WatchRemoveMessage {
 }
 
 /**
+ * One step of a lash (a saved multi-step automation — see `Lash`). A single interface with a
+ * `kind` discriminator + optional fields, mirroring `ScheduledAction`, so new step kinds
+ * (scroll, drag, …) can be added without breaking older payloads. Coordinates are normalized
+ * [0,1] of the display the lash was recorded on.
+ */
+export interface LashStep {
+  kind: "click" | "text" | "key" | "wait" | "display";
+  /** For kind "click": the target point. */
+  x?: number;
+  y?: number;
+  button?: MouseButton;
+  double?: boolean;
+  /** For kind "text": the literal string to type. */
+  text?: string;
+  /** For kind "text": press Enter after typing (defaults to true — "send the prompt"). */
+  submit?: boolean;
+  /** For kind "key", e.g. "Enter", "Escape", "Tab". */
+  key?: string;
+  modifiers?: string[];
+  /** For kind "wait": pause between steps, in ms. */
+  ms?: number;
+  /**
+   * For kind "display": switch which monitor the FOLLOWING click steps target, so one lash can
+   * click on several screens ("click on monitor 1 → change monitor → click on monitor 2"). The id
+   * matches `DisplayInfo.id`; execution re-pins the input mapper to it. `displayName` is a
+   * record-time label for the UI only (it never affects where clicks land).
+   */
+  displayId?: number;
+  displayName?: string;
+}
+
+/**
+ * A lash: a named, reusable input automation ("click 812,445 → type 'fix it' → Enter") kept in
+ * the LashStash. Lashes live ON THE HOST (state dir, like timers) because their coordinates are
+ * tied to that machine's screens — they survive agent updates and die with an uninstall, and are
+ * deliberately NOT synced to the cloud. If displays/windows change since recording, execution is
+ * allowed to fail loudly rather than click the wrong spot.
+ */
+export interface Lash {
+  id: string;
+  name: string;
+  steps: LashStep[];
+  /** Display the steps were recorded on; execution pins pointer mapping to it. */
+  displayId?: number;
+  /** Logical screen size when recorded — for showing human-readable px in the UI. */
+  screen?: ScreenInfo;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Caps enforced host-side when saving a lash (mirror them in client UIs). */
+export const LASH_LIMITS = {
+  MAX_LASHES: 50,
+  MAX_STEPS: 30,
+  MAX_NAME: 60,
+  MAX_TEXT: 2000,
+  MAX_WAIT_MS: 300_000,
+} as const;
+
+/**
  * Optional action the host performs when a timer fires (besides notifying). Lets a user schedule
  * an auto-click/keypress for when an AI tool's session cooldown ends — e.g. click "Retry" or send
  * a prompt the moment Claude/Copilot is available again. Coordinates are normalized [0,1].
  */
 export interface ScheduledAction {
-  kind: "click" | "key" | "text";
+  kind: "click" | "key" | "text" | "steps";
   /** Target point for a click, or where to focus before a key/text action. */
   x?: number;
   y?: number;
@@ -245,6 +305,11 @@ export interface ScheduledAction {
   key?: string;
   /** For kind "text": typed, then submitted with Enter. */
   text?: string;
+  /** For kind "steps": the lash step sequence to run (a snapshot — edits to the saved lash after
+   * scheduling don't retroactively change what fires). */
+  steps?: LashStep[];
+  /** For kind "steps": display the steps were recorded on (overrides the scheduling display). */
+  displayId?: number;
 }
 
 /** Schedule a one-shot reminder (and optional action) that fires `fireInMs` from now. */
@@ -259,6 +324,18 @@ export interface TimerAddMessage {
 /** Cancel a pending timer by id. */
 export interface TimerRemoveMessage {
   type: "timer-remove";
+  id: string;
+}
+
+/** Create or update (by id) a lash in the host's LashStash. The host echoes `lashes`. */
+export interface LashSaveMessage {
+  type: "lash-save";
+  lash: Lash;
+}
+
+/** Delete a lash by id. The host echoes `lashes`. */
+export interface LashRemoveMessage {
+  type: "lash-remove";
   id: string;
 }
 
@@ -306,6 +383,17 @@ export interface VideoStatsMessage {
   rttMs?: number;
 }
 
+/**
+ * Give this machine a friendly display name (e.g. "Work laptop" instead of "DESKTOP-4F2K1").
+ * The agent persists it in its state dir and uses it everywhere from then on: the welcome
+ * message, the dashboard registry, and the connection dialog. An empty name reverts to the
+ * OS hostname. The agent confirms with a `machine-name` broadcast to every controller.
+ */
+export interface RenameMachineMessage {
+  type: "rename-machine";
+  name: string;
+}
+
 export interface PingMessage {
   type: "ping";
   t: number;
@@ -327,11 +415,14 @@ export type ClientMessage =
   | WatchRemoveMessage
   | TimerAddMessage
   | TimerRemoveMessage
+  | LashSaveMessage
+  | LashRemoveMessage
   | MonitorScanMessage
   | MonitorAddMessage
   | MonitorRemoveMessage
   | MonitorAlwaysMessage
   | VideoStatsMessage
+  | RenameMachineMessage
   | PingMessage;
 
 // ---------------------------------------------------------------------------
@@ -365,6 +456,9 @@ export interface WelcomeMessage {
     /** Node's `process.platform`, e.g. "darwin", "win32", "linux". */
     platform: string;
     hostname: string;
+    /** True when the host desktop runs in HDR ("advanced color") — the stream is tone-mapped to
+     * SDR and may look washed compared to the real screen. Optional: older agents omit it. */
+    hdr?: boolean;
   };
   screen: ScreenInfo;
   capture: {
@@ -380,6 +474,8 @@ export interface WelcomeMessage {
   watchers: WatchRegion[];
   /** Pending one-shot timers (reminders / scheduled actions). */
   timers: TimerInfo[];
+  /** Saved lashes (reusable automations) stored on this host. */
+  lashes: Lash[];
   /** Active session monitors. */
   monitors: MonitorInfo[];
   /** Agent kinds with "always alert" mode enabled (persisted across restarts). */
@@ -408,6 +504,12 @@ export interface TimerInfo {
 export interface TimersMessage {
   type: "timers";
   timers: TimerInfo[];
+}
+
+/** The host's full LashStash (sent when the list changes). */
+export interface LashesMessage {
+  type: "lashes";
+  lashes: Lash[];
 }
 
 /** Live AI-agent sessions the host discovered (reply to `monitor-scan`). */
@@ -495,6 +597,12 @@ export interface NotificationMessage {
   t: number;
 }
 
+/** The machine's (possibly just-renamed) display name — broadcast after a `rename-machine`. */
+export interface MachineNameMessage {
+  type: "machine-name";
+  name: string;
+}
+
 export interface PongMessage {
   type: "pong";
   t: number;
@@ -517,10 +625,12 @@ export type ServerMessage =
   | PresenceMessage
   | WatchersMessage
   | TimersMessage
+  | LashesMessage
   | MonitorSessionsMessage
   | MonitorsMessage
   | MonitorAlwaysAgentsMessage
   | NotificationMessage
+  | MachineNameMessage
   | PongMessage
   | ErrorMessage;
 

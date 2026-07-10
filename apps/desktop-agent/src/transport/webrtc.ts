@@ -52,7 +52,7 @@ class RtpRestamper {
 /**
  * Phase 2 — WebRTC P2P answerer. Establishes a DTLS-encrypted DataChannel directly with a
  * remote controller for off-LAN control. No relay: once connected, frames + input flow
- * peer-to-peer. Firebase is used only for the SDP handshake (see ../signaling/rtdb.ts);
+ * peer-to-peer. The edge hub is used only for the SDP handshake (see ../signaling/edge.ts);
  * STUN-first with ephemeral-credential TURN as the fallback for NAT-blocked peers.
  *
  * Uses `werift` (pure-TS WebRTC) so it runs on bleeding-edge Node with no native build.
@@ -60,10 +60,10 @@ class RtpRestamper {
  * which keeps the signaling to one offer/answer round-trip.
  */
 
-/** Our own STUN (no public/free STUN). The signaling layer normally passes the full STUN+TURN
- * list from the backend; this is only the fallback. */
+/** Public STUN fallback (Google's free servers). The signaling layer normally passes the full
+ * STUN+TURN list minted by the edge; this is only used when that list is unavailable. */
 export function stunServers(): { urls: string }[] {
-  return [{ urls: "stun:turn-us1.whipdesk.com:3478" }];
+  return [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
 }
 
 export interface WebRtcAnswer {
@@ -73,7 +73,7 @@ export interface WebRtcAnswer {
   close: () => void;
 }
 
-/** An ICE server entry (STUN, or TURN with ephemeral credentials — see signaling/rtdb.ts). */
+/** An ICE server entry (STUN, or TURN with ephemeral credentials — see signaling/edge.ts). */
 export interface IceServer {
   urls: string | string[];
   username?: string;
@@ -211,6 +211,14 @@ export async function answerWebRtcOffer(
     onClosed?.();
   };
   pc.connectionStateChange.subscribe((s: string) => {
+    if (s === "failed" || s === "closed" || s === "disconnected") teardown();
+  });
+  // A controller that vanishes without a clean close (page refresh, tab kill, network drop) is
+  // detected by werift's ICE consent-freshness checks (RFC 7675) — but that only moves the ICE
+  // state to "disconnected" and stops there; `connectionStateChange` (DTLS-level) never fires and
+  // werift never recovers the pair. Without this subscription the dead session would be counted as
+  // a viewer forever (the "Viewers goes up on every refresh" bug).
+  pc.iceConnectionStateChange.subscribe((s: string) => {
     if (s === "failed" || s === "closed" || s === "disconnected") teardown();
   });
 

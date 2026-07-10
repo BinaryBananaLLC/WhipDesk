@@ -4,7 +4,7 @@
 // SEA build it's the sibling resources/node_modules (see build-sea.mjs). This file is the npm `bin`
 // and is (re)built by `prepublishOnly`.
 import { spawnSync } from "node:child_process";
-import { cpSync, rmSync } from "node:fs";
+import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
@@ -25,10 +25,26 @@ export const EXTERNAL = [
 const agentDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = join(agentDir, "..", "..");
 
+// Copy the repo-root README into the package, rewriting relative markdown links (`](docs/…)`,
+// `](LICENSE)`) to absolute GitHub URLs. Absolute links (https://…), anchors (#…) and mailto: are
+// left alone. This keeps ONE README that renders correctly on both github.com and npmjs.com.
+function mirrorReadme() {
+  const BLOB = "https://github.com/BinaryBananaLLC/WhipDesk/blob/main/";
+  const src = readFileSync(join(repoRoot, "README.md"), "utf8");
+  const rewritten = src.replace(/\]\((?!https?:\/\/|#|mailto:)([^)]+)\)/g, (_m, target) => `](${BLOB}${target})`);
+  writeFileSync(join(agentDir, "README.md"), rewritten);
+}
+
 export async function buildBundle() {
   // Version single-source: package.json -> src/version.ts.
   const r = spawnSync(process.execPath, ["scripts/sync-version.mjs"], { stdio: "inherit", cwd: agentDir });
   if (r.status !== 0) throw new Error(`sync-version -> exit ${r.status}`);
+
+  // README single-source: mirror the repo-root README onto the npm package so npmjs.com shows the
+  // SAME docs as GitHub (there is no second README to drift). Relative links (docs/…, LICENSE) are
+  // rewritten to absolute repo URLs so they resolve on the npm page. Generated (gitignored), run by
+  // prepublishOnly, so it's always in sync at publish time.
+  mirrorReadme();
 
   // The agent serves the controller PWA over LAN, so ship the built mobile-web NEXT TO the bundle
   // (dist/mobile-web). server.ts resolves it there in a packaged build.

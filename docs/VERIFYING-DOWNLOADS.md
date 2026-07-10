@@ -6,6 +6,10 @@ Every release asset is built by GitHub Actions from the tagged commit and carrie
 None of this requires trusting a mirror or a hosted binary — the checks below tie the exact bytes you
 downloaded to the exact workflow run and commit that produced them.
 
+The one-liner installers (`https://whipdesk.com/install.sh`, `/install.ps1`) verify each download
+against the release's `SHA256SUMS.txt` automatically before installing; their canonical, auditable
+source lives in this repo at [`scripts/install/`](../scripts/install/).
+
 ## 1. Build provenance (strongest — recommended)
 
 Requires the [GitHub CLI](https://cli.github.com/):
@@ -39,8 +43,9 @@ spctl -a -vvv -t install whipdesk-<ver>-macos-arm64.pkg   # should say "accepted
 xcrun stapler validate whipdesk-<ver>-macos-arm64.pkg
 ```
 
-**Windows** — the `.exe` is **not** code-signed (attestation-only distribution). SmartScreen will warn on
-first run: **More info → Run anyway**. Only do this *after* the provenance/checksum checks above pass.
+**Windows** — verify the download by its SHA-256 against `SHA256SUMS.txt` (and the SLSA provenance
+above) before running. WhipDesk's Windows builds are not yet code-signed, so SmartScreen will warn;
+use **More info → Run anyway** only *after* the provenance/checksum checks above pass.
 
 **Linux** — no OS signature layer; rely on the provenance + checksum checks.
 

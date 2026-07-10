@@ -2,6 +2,7 @@ import {
   isServerMessage,
   type AgentKind,
   type ClientMessage,
+  type Lash,
   type MonitorInfo,
   type MonitorSessionInfo,
   type NotificationMessage,
@@ -40,9 +41,13 @@ export interface ControllerEvents {
   netStats: { fps: number; rtt: number | null };
   notification: NotificationMessage;
   presence: number;
+  /** The machine's display name changed (someone renamed it via the connection dialog). */
+  machineName: string;
   pinRequired: PinRequest;
   watchers: WatchRegion[];
   timers: TimerInfo[];
+  /** Saved lashes (reusable automations) stored on the host — the LashStash. */
+  lashes: Lash[];
   /** Active session monitors (the host's authoritative list). */
   monitors: MonitorInfo[];
   /** Agent kinds with "always alert" mode on (persisted host-side). */
@@ -97,9 +102,11 @@ export class ControllerCore {
     transport: new Set(),
     notification: new Set(),
     presence: new Set(),
+    machineName: new Set(),
     pinRequired: new Set(),
     watchers: new Set(),
     timers: new Set(),
+    lashes: new Set(),
     monitors: new Set(),
     monitorAlways: new Set(),
     monitorSessions: new Set(),
@@ -183,6 +190,7 @@ export class ControllerCore {
         }
         this.emit("welcome", message);
         this.emit("timers", message.timers ?? []);
+        this.emit("lashes", message.lashes ?? []);
         this.emit("monitors", message.monitors ?? []);
         this.emit("monitorAlways", message.alwaysAgents ?? []);
         break;
@@ -210,11 +218,17 @@ export class ControllerCore {
       case "presence":
         this.emit("presence", message.watchers);
         break;
+      case "machine-name":
+        this.emit("machineName", message.name);
+        break;
       case "watchers":
         this.emit("watchers", message.regions);
         break;
       case "timers":
         this.emit("timers", message.timers);
+        break;
+      case "lashes":
+        this.emit("lashes", message.lashes);
         break;
       case "monitors":
         this.emit("monitors", message.monitors);

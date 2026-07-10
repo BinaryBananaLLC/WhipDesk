@@ -4,9 +4,10 @@ import type { ScreenView } from "./screen";
 
 /**
  * Interaction model selected by the UI tabs:
- *  - "viewer": look around safely. One finger drags the POINTER (shows the ring) but never
- *    clicks; you click with the explicit Click button. With drag-to-scroll on, one finger
- *    scrolls instead. Two fingers: pinch to zoom, drag to pan/scroll.
+ *  - "viewer": direct interaction, like the machine's own touchscreen. One finger drags the
+ *    POINTER (shows the ring); a tap CLICKS where you touch, and fast consecutive taps are
+ *    double/triple clicks. With the Pan tool or drag-to-scroll on, one finger pans/scrolls
+ *    instead and taps are inert. Two fingers: pinch to zoom, drag to pan/scroll.
  *  - "mouse": trackpad-style. Tap = click where you touch; drag = move the pointer; the
  *    Right/Double/Drag-hold buttons and long-press = right click cover the rest.
  *  - "touch": touchscreen simulation. Tap = tap (click) where you touch; swipe = scroll.
@@ -34,6 +35,8 @@ interface Pointer {
 const TAP_MS = 250;
 const LONG_PRESS_MS = 500;
 const MOVE_THRESHOLD = 8; // css px
+/** Min ms between host cursor updates while a desktop mouse just glides (hover-follow). */
+const HOVER_SEND_MS = 50;
 
 export interface InputCallbacks {
   /** Cursor moved (normalized). Lets the UI mirror position if needed. */
@@ -60,6 +63,8 @@ export class InputController {
   private longPressTimer = 0;
   private twoFinger: { dist: number; mx: number; my: number; start: number; moved: boolean } | null = null;
   private suppressTap = false;
+  private hoverSentAt = 0;
+  private hoverTrailing = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -73,6 +78,9 @@ export class InputController {
     canvas.addEventListener("pointerup", (e) => this.onUp(e));
     canvas.addEventListener("pointercancel", (e) => this.onUp(e));
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Desktop controllers: the mouse wheel zooms the view toward the cursor, mirroring the mobile
+    // pinch. passive:false so we can preventDefault the page/rubber-band scroll the wheel would do.
+    canvas.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     this.view.setCursor(this.cursor.nx, this.cursor.ny);
   }
 
@@ -159,7 +167,7 @@ export class InputController {
     this.conn.send(message);
   }
 
-  private positionOf(e: PointerEvent): { x: number; y: number } {
+  private positionOf(e: MouseEvent): { x: number; y: number } {
     const rect = this.canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
@@ -205,6 +213,23 @@ export class InputController {
     }
   }
 
+  /**
+   * Mouse-wheel zoom (desktop). Zooms around the pointer so the pixel under the cursor stays put —
+   * exactly like a two-finger pinch on mobile. The host re-crop is coalesced by main.ts's viewport
+   * debounce, so a wheel flick zooms instantly on-screen and asks the host to sharpen once it
+   * settles. deltaMode is normalized so a "lines" wheel (Firefox) matches a "pixels" trackpad.
+   */
+  private onWheel(e: WheelEvent): void {
+    e.preventDefault();
+    const p = this.positionOf(e);
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.canvas.clientHeight || 800 : 1;
+    // Clamp a single notch so a chunky mouse wheel can't jump multiple zoom stops at once.
+    const dy = Math.max(-40, Math.min(40, e.deltaY * unit));
+    const factor = Math.exp(-dy * 0.0016); // wheel up (dy<0) => factor>1 => zoom in
+    this.view.zoomAround(factor, p.x, p.y);
+    this.cb.onZoom?.(this.view.getZoom());
+  }
+
   private onLongPress(): void {
     const only = [...this.pointers.values()][0];
     if (!only || only.moved || only.consumed) return;
@@ -227,9 +252,37 @@ export class InputController {
     };
   }
 
+  /**
+   * Hover-follow (desktop controllers): a mouse gliding over the canvas with no button down still
+   * moves the host cursor, so you can SEE where you are on the remote screen before clicking —
+   * exactly like sitting at the machine. Throttled to one host update per HOVER_SEND_MS (it may
+   * lag a touch, never flood the channel), with a trailing send so the cursor always comes to rest
+   * where the mouse did. Touch can't hover, and Touch mode simulates a hoverless touchscreen.
+   */
+  private onHoverMove(e: PointerEvent): void {
+    if (e.pointerType !== "mouse" || e.buttons !== 0 || this.interaction === "touch") return;
+    const p = this.positionOf(e);
+    const n = this.view.canvasToNorm(p.x, p.y);
+    this.moveCursor(n.nx, n.ny); // the local ring tracks every frame; only host sends are throttled
+    window.clearTimeout(this.hoverTrailing);
+    const now = performance.now();
+    if (now - this.hoverSentAt < HOVER_SEND_MS) {
+      this.hoverTrailing = window.setTimeout(() => {
+        this.hoverSentAt = performance.now();
+        this.send({ type: "pointer", action: "move", x: this.cursor.nx, y: this.cursor.ny });
+      }, HOVER_SEND_MS);
+      return;
+    }
+    this.hoverSentAt = now;
+    this.send({ type: "pointer", action: "move", x: this.cursor.nx, y: this.cursor.ny });
+  }
+
   private onMove(e: PointerEvent): void {
     const ptr = this.pointers.get(e.pointerId);
-    if (!ptr) return;
+    if (!ptr) {
+      this.onHoverMove(e);
+      return;
+    }
     const p = this.positionOf(e);
     const prevX = ptr.x;
     const prevY = ptr.y;
@@ -341,7 +394,15 @@ export class InputController {
     }
     if (this.pointers.size < 2) this.twoFinger = null;
 
-    if (!ptr || ptr.consumed) return;
+    if (!ptr || ptr.consumed) {
+      // The LAST finger of a two-finger gesture exits here (it was marked consumed when the first
+      // lifted) — the gesture is fully over, so clear the tap suppression NOW. Leaving it set made
+      // the suppressTap block below eat the NEXT genuine tap: after every pinch-zoom / two-finger
+      // pan the first click on the screen silently did nothing ("I have to tap twice after moving
+      // the screen"). suppressTap must only ever guard lifts belonging to the SAME gesture.
+      if (this.pointers.size === 0) this.suppressTap = false;
+      return;
+    }
     if (this.suppressTap) {
       if (this.pointers.size === 0) this.suppressTap = false;
       return;
@@ -350,14 +411,16 @@ export class InputController {
     const duration = performance.now() - ptr.startT;
     const wasTap = !ptr.moved && duration < TAP_MS && this.pointers.size === 0;
     if (!wasTap || this.dragScroll) return;
+    // The Pan tool owns one-finger input: grabbing the view must never click through.
+    if (this.isPanning()) return;
 
-    // Tap = click at the touched point in Mouse and Touch modes. Viewer never taps-to-click.
-    if (this.interaction === "mouse" || this.interaction === "touch") {
-      const n = this.view.canvasToNorm(ptr.startX, ptr.startY);
-      this.moveCursor(n.nx, n.ny);
-      this.send({ type: "pointer", action: "click", button: "left", x: n.nx, y: n.ny });
-      navigator.vibrate?.(12);
-    }
-    // viewer: tap positioned the pointer in onDown; click with the Click button.
+    // Tap = click at the touched point, in EVERY mode — Browse included, which also covers the
+    // Type and Monitor tabs: the screen behaves like the machine's own touchscreen. Consecutive
+    // fast taps are consecutive clicks, so a double-tap IS a double click and a triple-tap a
+    // triple (the clicks ride one ordered channel and arrive as tightly as they were tapped).
+    const n = this.view.canvasToNorm(ptr.startX, ptr.startY);
+    this.moveCursor(n.nx, n.ny);
+    this.send({ type: "pointer", action: "click", button: "left", x: n.nx, y: n.ny });
+    navigator.vibrate?.(12);
   }
 }

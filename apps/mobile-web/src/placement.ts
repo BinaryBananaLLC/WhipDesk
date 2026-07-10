@@ -1,4 +1,6 @@
 import type { ScreenView } from "./screen";
+import type { Whipository } from "./whipository";
+import whipositoryMark from "./assets/whipository.png";
 
 export interface PlacementResult {
   /** Normalized [0,1] desktop point the user targeted. */
@@ -12,11 +14,13 @@ export interface PlacementOptions {
   withText: boolean;
   hint: string;
   confirmLabel: string;
+  /** When set (and `withText`), a tiny Whips button lets the user insert a saved prompt. */
+  whipository?: Whipository;
 }
 
 /**
  * Full-screen "place a target" mode for scheduling a timer action. The user can pan + pinch-zoom
- * the LIVE screen (like Viewer mode) and drop a crosshair on the exact element — then Confirm. For
+ * the LIVE screen (like Browse mode) and drop a crosshair on the exact element — then Confirm. For
  * a prompt action they type the text right here, seeing where it will land. All gestures are
  * handled locally, so nothing reaches the host (no stray clicks on the real machine).
  *
@@ -47,7 +51,31 @@ export function placeTarget(
     textInput = document.createElement("textarea");
     textInput.className = "wd-input wd-input-area wd-place-text";
     textInput.placeholder = "Type the prompt to send…";
-    bar.appendChild(textInput);
+    if (opts.whipository) {
+      // Prompt box + a tiny Whipository button beside it: inserting a saved whip fills THIS box
+      // (the user still confirms the target), never the host directly.
+      const row = document.createElement("div");
+      row.className = "wd-place-text-row";
+      const whips = document.createElement("button");
+      whips.type = "button";
+      whips.className = "wd-btn wd-icon-only wd-place-whips wd-whips-btn";
+      whips.title = "Whipository — insert a saved prompt";
+      whips.setAttribute("aria-label", "Insert a saved prompt");
+      const whipsImg = document.createElement("img");
+      whipsImg.src = whipositoryMark;
+      whipsImg.alt = "";
+      whipsImg.decoding = "async";
+      whips.appendChild(whipsImg);
+      whips.onclick = () =>
+        opts.whipository!.open((text) => {
+          textInput!.value = textInput!.value ? `${textInput!.value}${text}` : text;
+          textInput!.focus();
+        });
+      row.append(textInput, whips);
+      bar.appendChild(row);
+    } else {
+      bar.appendChild(textInput);
+    }
   }
 
   const buttons = document.createElement("div");

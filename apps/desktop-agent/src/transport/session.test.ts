@@ -63,6 +63,7 @@ function makeCtx(stateDir: string, withPin: boolean): Harness {
     activeDisplay: 0,
     videoAvailable: false,
     video: null,
+    hdrActive: false,
     controllers: new Set<Controller>(),
     addController: (c: Controller) => void (ctx as { controllers: Set<Controller> }).controllers.add(c),
     removeController: (c: Controller) => void (ctx as { controllers: Set<Controller> }).controllers.delete(c),
@@ -77,6 +78,9 @@ function makeCtx(stateDir: string, withPin: boolean): Harness {
     addTimer: noop,
     removeTimer: noop,
     listTimers: () => [],
+    saveLash: noop,
+    removeLash: noop,
+    listLashes: () => [],
     scanMonitors: async () => {},
     addMonitor: noop,
     removeMonitor: noop,
@@ -84,6 +88,8 @@ function makeCtx(stateDir: string, withPin: boolean): Harness {
     setAlwaysAgent: noop,
     listAlwaysAgents: () => [],
     reportVideoStats: noop,
+    getMachineName: () => "test-machine",
+    setMachineName: noop,
   } as unknown as AgentContext;
   harness.ctx = ctx;
   return harness;
