@@ -26,4 +26,4 @@ jobs:
           path-to-document: 'https://github.com/BinaryBananaLLC/WhipDesk/blob/main/CLA.md'
           path-to-signatures: 'signatures/cla.json'
           branch: 'cla-signatures'
-          allowlist: 'dzak83,bot*,dependabot[bot]'
+          allowlist: 'bot*,dependabot[bot]'
