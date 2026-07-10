@@ -289,34 +289,43 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
           "For unattended scheduled work, set the machine to not require a password immediately after display sleep.",
       );
     }
-    // Pointer coords are relative to the display the steps were RECORDED on — the active display
-    // may have changed since. Aim the input mapper at that display for the whole run (keyboard
-    // input doesn't use display geometry, so this only affects clicks). If that display is gone,
-    // fail loudly rather than click the same spot on a wrong screen.
-    let restoreInput: (() => void) | null = null;
-    if (displayId !== undefined && displayId !== activeDisplay && steps.some((s) => s.kind === "click")) {
-      const pinned = displays.find((d) => d.id === displayId);
-      if (!pinned || pinned.width <= 0 || pinned.height <= 0) {
-        throw new Error(`the display it was recorded on ([${displayId}]) is no longer connected`);
-      }
-      input.setActiveDisplay({
-        originX: pinned.originX,
-        originY: pinned.originY,
-        width: pinned.width,
-        height: pinned.height,
-      });
-      restoreInput = () => {
-        const cur = displays.find((d) => d.id === activeDisplay);
-        input.setActiveDisplay(
-          cur && cur.width > 0 && cur.height > 0
-            ? { originX: cur.originX, originY: cur.originY, width: cur.width, height: cur.height }
-            : null,
-        );
-      };
+    // Pointer coords are relative to the display a click was RECORDED on — the active display may
+    // have changed since, and one lash may even hop between monitors via "display" steps. Aim the
+    // input mapper at the right screen for each click (keyboard input ignores geometry, so this only
+    // affects clicks); a "display" step re-points it mid-run. If a needed display is gone, fail
+    // loudly rather than click the same spot on a wrong screen.
+    const geomFor = (id: number) => {
+      const d = displays.find((x) => x.id === id);
+      if (!d || d.width <= 0 || d.height <= 0) throw new Error(`the display it was recorded on ([${id}]) is no longer connected`);
+      return { originX: d.originX, originY: d.originY, width: d.width, height: d.height };
+    };
+    let inputPinned = false;
+    const pinInputTo = (id: number) => {
+      input.setActiveDisplay(geomFor(id));
+      inputPinned = true;
+    };
+    const restoreInput = () => {
+      if (!inputPinned) return;
+      const cur = displays.find((d) => d.id === activeDisplay);
+      input.setActiveDisplay(
+        cur && cur.width > 0 && cur.height > 0
+          ? { originX: cur.originX, originY: cur.originY, width: cur.width, height: cur.height }
+          : null,
+      );
+    };
+    // Pin the recording display up front only if a click runs BEFORE the first monitor switch.
+    const firstSwitch = steps.findIndex((s) => s.kind === "display");
+    const clicksBeforeSwitch = steps.some((s, i) => s.kind === "click" && (firstSwitch === -1 || i < firstSwitch));
+    if (displayId !== undefined && displayId !== activeDisplay && clicksBeforeSwitch) {
+      pinInputTo(displayId);
     }
     try {
       for (const [i, s] of steps.entries()) {
         switch (s.kind) {
+          case "display":
+            if (typeof s.displayId !== "number") throw new Error("monitor-switch step has no display");
+            pinInputTo(s.displayId);
+            break;
           case "click":
             if (typeof s.x !== "number" || typeof s.y !== "number") throw new Error("click step has no target");
             await input.click(s.button ?? "left", s.double === true, s.x, s.y);
@@ -340,7 +349,7 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
         if (i < steps.length - 1 && s.kind !== "wait") await delay(250);
       }
     } finally {
-      restoreInput?.();
+      restoreInput();
     }
   };
 

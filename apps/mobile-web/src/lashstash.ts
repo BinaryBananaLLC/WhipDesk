@@ -1,4 +1,4 @@
-import { LASH_LIMITS, type Lash, type LashStep, type ScreenInfo } from "@whipdesk/protocol";
+import { LASH_LIMITS, type DisplayInfo, type Lash, type LashStep, type ScreenInfo } from "@whipdesk/protocol";
 import type { ControllerTransport } from "./core";
 import type { Notifications } from "./notifications";
 import type { ScreenView } from "./screen";
@@ -65,6 +65,8 @@ export function describeStep(step: LashStep, screen?: ScreenInfo): string {
       const s = (step.ms ?? 0) / 1000;
       return `Wait ${s >= 1 && Number.isInteger(s) ? s.toFixed(0) : s.toFixed(1)}s`;
     }
+    case "display":
+      return `Switch to ${step.displayName ?? `display ${step.displayId ?? "?"}`}`;
     default:
       return "Unknown step";
   }
@@ -89,6 +91,8 @@ export class LashStash {
   private lashes: Lash[] = [];
   /** Display the host is currently capturing — new click steps are recorded against it. */
   private activeDisplay = 0;
+  /** All host displays — offered by the "Change monitor" step so a lash can span screens. */
+  private displays: DisplayInfo[] = [];
   private overlay: HTMLElement | null = null;
   private opts: LashStashOpenOptions = {};
   /** Re-renders the open list view when the host's broadcast reconciles our optimistic state. */
@@ -110,6 +114,10 @@ export class LashStash {
 
   setActiveDisplay(id: number): void {
     this.activeDisplay = id;
+  }
+
+  setDisplays(displays: DisplayInfo[]): void {
+    this.displays = displays;
   }
 
   open(opts: LashStashOpenOptions = {}): void {
@@ -394,9 +402,10 @@ export class LashStash {
           (result) => {
             overlay.style.display = "";
             if (!result) return;
-            // Placement is against the display the host streams NOW — retarget the whole lash
-            // to it (older click steps from another display are invalid anyway, by design).
-            draft.displayId = this.activeDisplay;
+            // A multi-monitor lash pins its INITIAL display in draft.displayId and switches later
+            // via "display" steps, so only retarget the whole lash while it has no monitor-switch
+            // steps yet (older single-display clicks from another display are invalid by design).
+            if (!draft.steps.some((s) => s.kind === "display")) draft.displayId = this.activeDisplay;
             draft.screen = this.view.getScreen();
             done(result);
           },
@@ -495,6 +504,33 @@ export class LashStash {
           return true;
         }));
       });
+      // Multi-monitor lashes: a "change monitor" step switches which screen the FOLLOWING clicks
+      // target, so you can "click on monitor 1 → change monitor → click on monitor 2". Only shown
+      // when the host actually has more than one display.
+      if (this.displays.length > 1) {
+        chip("+ Change monitor", () => {
+          const sel = el("select", "wd-input");
+          for (const d of this.displays) {
+            const o = document.createElement("option");
+            o.value = String(d.id);
+            o.textContent = `${d.name}${d.primary ? " ★" : ""}`;
+            if (d.id === this.activeDisplay) o.selected = true;
+            sel.appendChild(o);
+          }
+          const hint = el("p", "wd-dialog-help", "The next click steps target this monitor. The live view switches to it so you can place them.");
+          subform.replaceChildren(hint, sel, subActions(() => {
+            const id = Number(sel.value);
+            const disp = this.displays.find((d) => d.id === id);
+            if (!disp) return false;
+            // Switch the live stream so the chosen monitor is visible for the clicks that follow.
+            this.conn.send({ type: "select-display", id });
+            this.activeDisplay = id;
+            draft.screen = this.view.getScreen();
+            pushSteps({ kind: "display", displayId: id, displayName: disp.name });
+            return true;
+          }));
+        });
+      }
       const subActions = (onAdd: () => boolean) => {
         const bar = el("div", "wd-dialog-actions");
         const cancel = el("button", "wd-btn");

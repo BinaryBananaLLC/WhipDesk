@@ -42,24 +42,65 @@ function claudeProjectDir(cwd: string): string {
 }
 
 /**
+ * Newest transcript for a session. Prefer the cwd's project dir; when the cwd can't be resolved
+ * (common when Claude Code runs embedded in an editor — the VS Code extension — where the process
+ * cwd often isn't readable) OR that dir has no transcript, fall back to the most recently ACTIVE
+ * project dir. Without this fallback the quiet-window hint below is skipped entirely for editor
+ * sessions, so a long "thinking/planning" pause is misread as "waiting on you" and pings falsely.
+ */
+function newestClaudeJsonl(cwd: string): string | null {
+  if (cwd) {
+    const own = newestJsonl(claudeProjectDir(cwd));
+    if (own) return own;
+  }
+  const root = join(home, ".claude", "projects");
+  let newestDir: string | null = null;
+  let newestMs = 0;
+  try {
+    for (const proj of readdirSync(root)) {
+      const dir = join(root, proj);
+      try {
+        const ms = statSync(dir).mtimeMs;
+        if (ms > newestMs) {
+          newestMs = ms;
+          newestDir = dir;
+        }
+      } catch {
+        /* raced a delete */
+      }
+    }
+  } catch {
+    return null;
+  }
+  return newestDir ? newestJsonl(newestDir) : null;
+}
+
+/**
  * The quiet-window disambiguator for Claude Code: read the last complete JSONL line of the newest
- * session transcript. An assistant entry that ends in `tool_use` means a tool is still executing
- * (working); an assistant entry that ends in text means the turn is over (waiting on the user); a
- * user entry means the model owns the turn (working). Anything unreadable returns null (no hint).
+ * session transcript and decide whether the model still owns the turn ("working") or has handed it
+ * back ("waiting on the user"). The model only TRULY ends its turn with `stop_reason: "end_turn"`
+ * (or "stop_sequence"); an unfinished/streaming message, an extended-thinking block, plan text, or
+ * a `tool_use` are all still its turn — those must read as WORKING so a thinking/planning agent is
+ * never mistaken for one that needs you. A `user` entry (a real prompt or a tool_result fed back)
+ * also means the model's turn. Anything unreadable returns null (no hint).
  */
 async function claudeTailHint(cwd: string): Promise<"working" | "waiting" | null> {
-  const line = readLastJsonlLine(newestJsonl(claudeProjectDir(cwd)));
+  const line = readLastJsonlLine(newestClaudeJsonl(cwd));
   if (!line) return null;
   try {
     const entry = JSON.parse(line) as {
       type?: string;
-      message?: { content?: Array<{ type?: string }> | string };
+      message?: { content?: Array<{ type?: string }> | string; stop_reason?: string | null };
     };
     if (entry.type === "user") return "working";
     if (entry.type === "assistant") {
       const content = entry.message?.content;
+      // A tool call is still executing / about to run → working.
       if (Array.isArray(content) && content.some((c) => c?.type === "tool_use")) return "working";
-      return "waiting";
+      // Only a completed turn hands control back. Thinking/plan/streaming text (no or non-terminal
+      // stop_reason) is still the model working — NOT a prompt for the user.
+      const stop = entry.message?.stop_reason;
+      return stop === "end_turn" || stop === "stop_sequence" ? "waiting" : "working";
     }
   } catch {
     /* torn write mid-line — no hint this poll */
@@ -201,7 +242,7 @@ export const AGENTS: AgentDef[] = [
     label: "Claude Code",
     match: (t) => has(t, "claude") || has(t, "claude-code"),
     activityPaths: (cwd) => [...(cwd ? [claudeProjectDir(cwd)] : []), join(home, ".claude", "projects")],
-    tailHint: (cwd) => (cwd ? claudeTailHint(cwd) : Promise.resolve(null)),
+    tailHint: (cwd) => claudeTailHint(cwd),
   },
   {
     kind: "codex",

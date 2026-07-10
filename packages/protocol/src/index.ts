@@ -236,7 +236,7 @@ export interface WatchRemoveMessage {
  * [0,1] of the display the lash was recorded on.
  */
 export interface LashStep {
-  kind: "click" | "text" | "key" | "wait";
+  kind: "click" | "text" | "key" | "wait" | "display";
   /** For kind "click": the target point. */
   x?: number;
   y?: number;
@@ -251,6 +251,14 @@ export interface LashStep {
   modifiers?: string[];
   /** For kind "wait": pause between steps, in ms. */
   ms?: number;
+  /**
+   * For kind "display": switch which monitor the FOLLOWING click steps target, so one lash can
+   * click on several screens ("click on monitor 1 → change monitor → click on monitor 2"). The id
+   * matches `DisplayInfo.id`; execution re-pins the input mapper to it. `displayName` is a
+   * record-time label for the UI only (it never affects where clicks land).
+   */
+  displayId?: number;
+  displayName?: string;
 }
 
 /**

@@ -10,7 +10,7 @@ import { LASH_LIMITS, type Lash, type LashStep, type MouseButton } from "@whipde
 
 const FILE = "lashes.json";
 
-const STEP_KINDS = new Set<LashStep["kind"]>(["click", "text", "key", "wait"]);
+const STEP_KINDS = new Set<LashStep["kind"]>(["click", "text", "key", "wait", "display"]);
 const BUTTONS = new Set<MouseButton>(["left", "right", "middle"]);
 
 function clamp01(n: unknown): number {
@@ -48,6 +48,15 @@ function sanitizeStep(raw: unknown): LashStep | null {
       const ms = Math.round(Number(s.ms));
       if (!Number.isFinite(ms) || ms <= 0) return null;
       return { kind: "wait", ms: Math.min(ms, LASH_LIMITS.MAX_WAIT_MS) };
+    }
+    case "display": {
+      const id = Math.round(Number(s.displayId));
+      if (!Number.isFinite(id) || id < 0) return null;
+      return {
+        kind: "display",
+        displayId: id,
+        displayName: typeof s.displayName === "string" ? s.displayName.slice(0, LASH_LIMITS.MAX_NAME) : undefined,
+      };
     }
   }
 }
