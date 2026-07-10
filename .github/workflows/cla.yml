@@ -10,6 +10,7 @@ permissions: {}
 
 jobs:
   cla:
+    name: CLA Assistant
     if: github.event_name == 'pull_request_target' || (github.event.issue.pull_request && (contains(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA') || github.event.comment.body == 'recheck'))
     runs-on: ubuntu-latest
     permissions:
