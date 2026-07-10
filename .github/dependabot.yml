@@ -1,0 +1,28 @@
+version: 2
+updates:
+  # Workspace deps, monthly and bundled: ONE PR for all minor/patch bumps, ONE for all majors —
+  # never a PR per package. Security advisories still open their own PRs immediately regardless
+  # of this schedule.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      majors:
+        patterns: ["*"]
+        update-types: ["major"]
+
+  # Keep the SHA-pinned actions fresh (Dependabot updates the pin + the version comment) —
+  # everything bundled into a single monthly PR.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ["*"]

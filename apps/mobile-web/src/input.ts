@@ -35,6 +35,8 @@ interface Pointer {
 const TAP_MS = 250;
 const LONG_PRESS_MS = 500;
 const MOVE_THRESHOLD = 8; // css px
+/** Min ms between host cursor updates while a desktop mouse just glides (hover-follow). */
+const HOVER_SEND_MS = 50;
 
 export interface InputCallbacks {
   /** Cursor moved (normalized). Lets the UI mirror position if needed. */
@@ -61,6 +63,8 @@ export class InputController {
   private longPressTimer = 0;
   private twoFinger: { dist: number; mx: number; my: number; start: number; moved: boolean } | null = null;
   private suppressTap = false;
+  private hoverSentAt = 0;
+  private hoverTrailing = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -248,9 +252,37 @@ export class InputController {
     };
   }
 
+  /**
+   * Hover-follow (desktop controllers): a mouse gliding over the canvas with no button down still
+   * moves the host cursor, so you can SEE where you are on the remote screen before clicking —
+   * exactly like sitting at the machine. Throttled to one host update per HOVER_SEND_MS (it may
+   * lag a touch, never flood the channel), with a trailing send so the cursor always comes to rest
+   * where the mouse did. Touch can't hover, and Touch mode simulates a hoverless touchscreen.
+   */
+  private onHoverMove(e: PointerEvent): void {
+    if (e.pointerType !== "mouse" || e.buttons !== 0 || this.interaction === "touch") return;
+    const p = this.positionOf(e);
+    const n = this.view.canvasToNorm(p.x, p.y);
+    this.moveCursor(n.nx, n.ny); // the local ring tracks every frame; only host sends are throttled
+    window.clearTimeout(this.hoverTrailing);
+    const now = performance.now();
+    if (now - this.hoverSentAt < HOVER_SEND_MS) {
+      this.hoverTrailing = window.setTimeout(() => {
+        this.hoverSentAt = performance.now();
+        this.send({ type: "pointer", action: "move", x: this.cursor.nx, y: this.cursor.ny });
+      }, HOVER_SEND_MS);
+      return;
+    }
+    this.hoverSentAt = now;
+    this.send({ type: "pointer", action: "move", x: this.cursor.nx, y: this.cursor.ny });
+  }
+
   private onMove(e: PointerEvent): void {
     const ptr = this.pointers.get(e.pointerId);
-    if (!ptr) return;
+    if (!ptr) {
+      this.onHoverMove(e);
+      return;
+    }
     const p = this.positionOf(e);
     const prevX = ptr.x;
     const prevY = ptr.y;

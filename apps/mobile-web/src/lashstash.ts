@@ -372,8 +372,17 @@ export class LashStash {
       renderSteps();
 
       // Sub-form host: the inline editors for text/key/wait steps render here, one at a time.
+      // While one is open, the editor's own Cancel/Create row hides — otherwise two visually
+      // identical button rows stack up and "Create" could commit a half-built step.
       const subform = el("div", "wd-lash-subform");
-      const closeSub = () => subform.replaceChildren();
+      const openSub = (...nodes: HTMLElement[]) => {
+        subform.replaceChildren(...nodes);
+        bar.classList.add("hidden");
+      };
+      const closeSub = () => {
+        subform.replaceChildren();
+        bar.classList.remove("hidden");
+      };
 
       const pushSteps = (...steps: LashStep[]) => {
         if (draft.steps.length + steps.length > LASH_LIMITS.MAX_STEPS) {
@@ -465,7 +474,7 @@ export class LashStash {
         cb.type = "checkbox";
         cb.checked = true;
         lab.append(cb, el("span", "wd-check-text", "Press Enter after (send it)"));
-        subform.replaceChildren(taRow, lab, subActions(() => {
+        openSub(taRow, lab, subActions(() => {
           const text = ta.value.trim();
           if (!text) {
             ta.focus();
@@ -484,7 +493,7 @@ export class LashStash {
           o.textContent = k;
           sel.appendChild(o);
         }
-        subform.replaceChildren(sel, subActions(() => {
+        openSub(sel, subActions(() => {
           pushSteps({ kind: "key", key: sel.value });
           return true;
         }));
@@ -498,7 +507,7 @@ export class LashStash {
         secs.inputMode = "numeric";
         const row = el("div", "wd-form-duration");
         row.append(secs, el("span", "wd-form-unit", "seconds"));
-        subform.replaceChildren(row, subActions(() => {
+        openSub(row, subActions(() => {
           const s = Math.max(1, Math.min(LASH_LIMITS.MAX_WAIT_MS / 1000, Math.round(Number(secs.value) || 0)));
           pushSteps({ kind: "wait", ms: s * 1000 });
           return true;
@@ -518,7 +527,7 @@ export class LashStash {
             sel.appendChild(o);
           }
           const hint = el("p", "wd-dialog-help", "The next click steps target this monitor. The live view switches to it so you can place them.");
-          subform.replaceChildren(hint, sel, subActions(() => {
+          openSub(hint, sel, subActions(() => {
             const id = Number(sel.value);
             const disp = this.displays.find((d) => d.id === id);
             if (!disp) return false;

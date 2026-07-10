@@ -2,6 +2,7 @@ import { Connection } from "./connection";
 import { ConnectingOverlay } from "./connecting";
 import { Controls } from "./controls";
 import type { ControllerTransport } from "./core";
+import { installEscToClose } from "./escClose";
 import { InputController } from "./input";
 import { LashStash } from "./lashstash";
 import { Notifications } from "./notifications";
@@ -58,6 +59,7 @@ const toasts = el("div", "wd-toasts");
 app.append(canvas, toasts);
 
 const { token, remote, device } = parseHash();
+installEscToClose();
 const view = new ScreenView(canvas);
 const notifications = new Notifications(toasts);
 const pinPrompt = new PinPrompt(app);

@@ -8,3 +8,5 @@ declare module "*.gif" {
   const url: string;
   export default url;
 }
+// Side-effect stylesheet imports (Vite injects them); TS 6 requires a declaration to exist.
+declare module "*.css";

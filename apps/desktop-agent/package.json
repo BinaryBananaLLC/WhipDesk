@@ -48,13 +48,13 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.1.0",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/ws": "^8.5.12",
     "@whipdesk/protocol": "*",
     "esbuild": "^0.28.1",
     "postject": "^1.0.0-alpha.6",
-    "tsx": "^4.19.2",
-    "typescript": "^5.9.3"
+    "tsx": "^4.22.5",
+    "typescript": "^6.0.3"
   }
 }

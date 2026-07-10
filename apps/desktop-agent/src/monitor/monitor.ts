@@ -13,8 +13,6 @@ interface Session {
   pid: number;
   cwd: string;
   activityPaths: string[];
-  /** See AgentDef.ignoreCpu — editor-embedded agents whose host CPU is meaningless. */
-  ignoreCpu: boolean;
   /** See AgentDef.tailHint — transcript-tail disambiguation for the quiet window. */
   tailHint: ((cwd: string) => Promise<"working" | "waiting" | null>) | null;
   state: MonitorState;
@@ -228,7 +226,6 @@ export class SessionMonitor {
             pid: p.pid,
             cwd,
             activityPaths: def.activityPaths(cwd),
-            ignoreCpu: def.ignoreCpu ?? false,
             tailHint: def.tailHint ?? null,
             state: "unknown",
             candidate: null,
@@ -284,8 +281,8 @@ export class SessionMonitor {
         }
         this.transition(s, inferState(s.state === "unknown" ? "idle" : s.state, {
           present: true,
-          cpu: s.ignoreCpu ? 0 : p.cpu,
-          subtreeCpu: s.ignoreCpu ? 0 : subtreeCpu(p.pid, children),
+          cpu: p.cpu,
+          subtreeCpu: subtreeCpu(p.pid, children),
           activityAgeMs,
         }));
       }

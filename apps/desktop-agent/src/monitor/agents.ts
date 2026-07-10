@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
-import { homedir, platform } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentKind } from "@whipdesk/protocol";
 
@@ -19,12 +19,6 @@ export interface AgentDef {
    * `cwd` (the agent's working dir) may be "" when it couldn't be resolved.
    */
   activityPaths(cwd: string): string[];
-  /**
-   * The process's own %CPU is meaningless for this agent, so state inference must not use it.
-   * Needed for editor-embedded agents (VS Code's extension host runs EVERY extension plus things
-   * like tsserver children — its CPU says nothing about whether Copilot is generating).
-   */
-  ignoreCpu?: boolean;
   /**
    * Optional precision refinement: peek at the newest transcript's LAST entry to disambiguate the
    * quiet window between "still mid-turn" (a tool is running / the model owns the turn — treat as
@@ -151,91 +145,6 @@ function readLastJsonlLine(path: string | null): string | null {
   }
 }
 
-// ---------------------------------------------------------------------------
-// VS Code Copilot Chat: it runs INSIDE the extension-host process (no `copilot` in any argv), so
-// process matching alone can't see it. Two extra signals make it observable:
-//  1. Match the extension host itself when a Copilot extension is installed (checked below).
-//  2. Watch VS Code's chat-session storage as the activity path — Copilot Chat appends to
-//     workspaceStorage/<hash>/chatSessions/*.json as a conversation progresses, which is exactly
-//     the transcript-mtime signal the state machine already runs on.
-// ---------------------------------------------------------------------------
-
-/** VS Code user-data roots per platform (stable + Insiders + OSS builds). */
-function vsCodeUserDirs(): string[] {
-  const variants = ["Code", "Code - Insiders", "VSCodium"];
-  if (platform() === "darwin") return variants.map((v) => join(home, "Library", "Application Support", v, "User"));
-  if (platform() === "win32") {
-    const appData = process.env.APPDATA || join(home, "AppData", "Roaming");
-    return variants.map((v) => join(appData, v, "User"));
-  }
-  return variants.map((v) => join(home, ".config", v, "User"));
-}
-
-/** The most recently used workspaces' chat-session dirs (bounded so polling stays cheap). */
-function vsCodeChatSessionDirs(): string[] {
-  const out: Array<{ path: string; ms: number }> = [];
-  for (const user of vsCodeUserDirs()) {
-    const storage = join(user, "workspaceStorage");
-    let entries: string[];
-    try {
-      entries = readdirSync(storage);
-    } catch {
-      continue;
-    }
-    for (const hash of entries) {
-      for (const kind of ["chatSessions", "chatEditingSessions"]) {
-        const dir = join(storage, hash, kind);
-        try {
-          out.push({ path: dir, ms: statSync(dir).mtimeMs });
-        } catch {
-          /* workspace has no chat storage */
-        }
-      }
-    }
-  }
-  return out
-    .sort((a, b) => b.ms - a.ms)
-    .slice(0, 5)
-    .map((e) => e.path);
-}
-
-/** Is a GitHub Copilot extension available in any VS Code variant? Cached — checked at most once a
- * minute, because `match` runs for every process on every 3s poll. */
-let copilotInstalledCache: { value: boolean; at: number } | null = null;
-function vsCodeCopilotInstalled(): boolean {
-  const now = Date.now();
-  if (copilotInstalledCache && now - copilotInstalledCache.at < 60_000) return copilotInstalledCache.value;
-  let value = false;
-  for (const dir of [join(home, ".vscode", "extensions"), join(home, ".vscode-insiders", "extensions"), join(home, ".vscode-oss", "extensions")]) {
-    try {
-      if (readdirSync(dir).some((e) => e.toLowerCase().startsWith("github.copilot"))) {
-        value = true;
-        break;
-      }
-    } catch {
-      /* variant not installed */
-    }
-  }
-  // Copilot Chat ships BUILT-IN in recent VS Code (not under .vscode/extensions), so also treat the
-  // presence of chat-session storage as "Copilot available" — that storage is only written by chat.
-  if (!value) value = vsCodeChatSessionDirs().length > 0;
-  copilotInstalledCache = { value, at: now };
-  return value;
-}
-
-/** The VS Code extension-host process (hosts Copilot Chat). The marker moved across versions:
- * legacy `--type=extensionHost`; some builds `extensionHostProcess`; modern VS Code (1.80+) runs it
- * as a Node UTILITY process with NO "extensionHost" string at all — it's the `node.mojom.NodeService`
- * that carries an `--inspect-port` (extension debugging), which the sibling shared-process / file-
- * watcher / pty-host node services do not. */
-function isVsCodeExtensionHost(cmd: string): boolean {
-  return (
-    cmd.includes("--type=extensionhost") ||
-    cmd.includes("extensionhostprocess") ||
-    (cmd.includes("node.mojom.nodeservice") && cmd.includes("--inspect-port"))
-  );
-}
-
 export const AGENTS: AgentDef[] = [
   {
     kind: "claude",
@@ -269,24 +178,15 @@ export const AGENTS: AgentDef[] = [
     activityPaths: () => [join(home, ".local", "share", "opencode")],
   },
   {
-    // Four ways Copilot shows up, in matching order:
-    //  - the `copilot` CLI (argv basename), which logs under ~/.copilot;
-    //  - the completions language server, a child process whose command line carries
-    //    `copilot-language-server` or the extension path `github.copilot[-chat]`;
-    //  - Copilot CHAT, which runs inside VS Code's extension host with NO copilot marker in any
-    //    argv — matched via the extension host itself when a Copilot extension is installed, with
-    //    VS Code's chat-session storage as the transcript (see vsCodeChatSessionDirs).
-    // CPU is ignored: the extension host runs every extension (plus tsserver children), so its CPU
-    // says nothing about Copilot — chat-storage mtime is the real signal.
+    // ONLY the interactive `copilot` CLI (argv basename), which logs under ~/.copilot. Editor-
+    // embedded Copilot (VS Code's extension host, the completions language server, chat-session
+    // storage) is deliberately NOT matched: those processes run whenever the editor does and the
+    // editor touches that storage during ordinary use, so every heuristic tried produced phantom
+    // "busy" sessions while the user wasn't using Copilot at all.
     kind: "copilot",
-    label: "GitHub Copilot",
-    match: (t, cmd) =>
-      has(t, "copilot") ||
-      cmd.includes("copilot-language-server") ||
-      cmd.includes("github.copilot") ||
-      (isVsCodeExtensionHost(cmd) && vsCodeCopilotInstalled()),
-    activityPaths: () => [join(home, ".copilot"), ...vsCodeChatSessionDirs()],
-    ignoreCpu: true,
+    label: "Copilot CLI",
+    match: (t) => has(t, "copilot"),
+    activityPaths: () => [join(home, ".copilot")],
   },
   { kind: "cursor", label: "Cursor Agent", match: (t) => has(t, "cursor-agent"), activityPaths: () => [] },
   {
@@ -314,7 +214,7 @@ const LABELS: Record<AgentKind, string> = {
   codex: "Codex CLI",
   gemini: "Gemini CLI",
   aider: "Aider",
-  copilot: "GitHub Copilot",
+  copilot: "Copilot CLI",
   opencode: "opencode",
   cursor: "Cursor Agent",
   amp: "Amp",
