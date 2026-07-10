@@ -54,11 +54,7 @@
     "@whipdesk/protocol": "*",
     "esbuild": "^0.28.1",
     "postject": "^1.0.0-alpha.6",
-<<<<<<< HEAD
-    "tsx": "^4.19.2",
-=======
     "tsx": "^4.22.5",
->>>>>>> origin/main
     "typescript": "^6.0.3"
   }
 }
