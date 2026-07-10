@@ -10,6 +10,8 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 
+.
+
 WhipDesk turns any mobile browser into a remote control for your dev machine. See the screen,
 move the mouse, type, paste prompts into your AI tools, and get a push notification the moment a
 long-running build or agent job finishes — no app store install, no kernel extension, no agent
