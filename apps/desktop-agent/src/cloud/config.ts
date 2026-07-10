@@ -43,7 +43,10 @@ export interface CloudConfig {
  */
 export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   apiKey: "AIzaSyCKwUELKrNUY3cfRTKL3rKkoGS_l3VCRJg",
-  authDomain: "whipdesk.firebaseapp.com",
+  // Matches the web config: whipdesk.com reverse-proxies the /__/auth* helper paths, so every
+  // WhipDesk client names the same branded auth domain. (Headless agent flows don't open the
+  // helper pages; kept in lockstep with WWW src/firebaseConfig.ts on purpose.)
+  authDomain: "whipdesk.com",
   projectId: "whipdesk",
   appId: "1:55602305407:web:4fad59e539c44d6a5d224a",
   messagingSenderId: "55602305407",
