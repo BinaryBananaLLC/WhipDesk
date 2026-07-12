@@ -6,6 +6,7 @@ import type { ScreenView } from "./screen";
 import type { RegionWatchers } from "./watchers";
 import type { Whipository } from "./whipository";
 import { icon, type IconName } from "./icons";
+import { PromptHistory } from "./promptHistory";
 import { DONATE_URL, GITHUB_URL, REDDIT_URL, dashboardUrl } from "./site";
 import whipositoryMark from "./assets/whipository.png";
 import autoWhipsIcon from "./assets/auto-whips-icon.png";
@@ -145,7 +146,8 @@ function transportLabel(t: string): string {
  *
  *  - Browse:   zoom −/+, pan, scroll/page; tap the screen to click, just like the real device.
  *  - Type:     write text — textarea + special keys + Insert (no Enter) / Send (Enter).
- *  - Interact: full control — Mouse|Touch segment, then Left/Right/Double/Drag/Scroll.
+ *  - Interact: full control — Mouse|Touch segment. Mouse: Left, Left-held (latched button-down for
+ *    dragging/resizing host windows), Right, Double, Drag.
  *  - Monitor:  pick which display to view + control.
  *
  * A chevron collapses the whole ribbon to a slim handle to free the screen.
@@ -184,6 +186,18 @@ export class Controls {
 
   private monitorList!: HTMLElement;
   private promptInput!: HTMLTextAreaElement;
+  // Task 3: terminal-style recall of the last few sent prompts. `histIndex` walks the list; -1 means
+  // "editing / not navigating", indices 0..len-1 select a recalled entry, and `histDraft` preserves
+  // whatever was being composed before you started walking back up.
+  private readonly typeHistory = new PromptHistory();
+  private histIndex = -1;
+  private histDraft = "";
+  private histPrevBtn: HTMLButtonElement | null = null;
+  private histNextBtn: HTMLButtonElement | null = null;
+  // Task 1: "Hold left" button (latched left-button-down for dragging/resizing host windows) plus a
+  // persistent pill so the held state is obvious even if the ribbon is collapsed.
+  private holdLeftBtn: HTMLButtonElement | null = null;
+  private holdPill!: HTMLButtonElement;
 
   private activeTab: Tab | null = null;
   private interactMode: "mouse" | "touch" = "mouse";
@@ -570,7 +584,23 @@ export class Controls {
     ribbon.appendChild(this.panel);
     this.root.appendChild(ribbon);
 
+    // Persistent "left button held" indicator — floats above the screen so the latched state is
+    // obvious even while the ribbon is collapsed. Tapping it releases the button.
+    this.holdPill = el("button", "wd-hold-pill hidden");
+    this.holdPill.type = "button";
+    this.holdPill.append(icon("mouse-left-hold", 16), el("span", undefined, "Left button held — tap here to release"));
+    this.holdPill.onclick = () => this.deps.input.setLeftHold(false);
+    this.root.appendChild(this.holdPill);
+    this.deps.input.setLeftHoldListener((held) => this.onLeftHoldChanged(held));
+
     this.selectTab("viewer");
+  }
+
+  /** Reflect the latched left-button state in the Hold button + the floating pill (fired for any
+   *  change, incl. the auto-release when leaving Interact/Mouse). */
+  private onLeftHoldChanged(held: boolean): void {
+    this.holdLeftBtn?.classList.toggle("on", held);
+    this.holdPill.classList.toggle("hidden", !held);
   }
 
   private buildViewerPane(): HTMLElement {
@@ -635,6 +665,7 @@ export class Controls {
   private renderInteract(): void {
     const { input } = this.deps;
     this.interactHost.replaceChildren();
+    this.holdLeftBtn = null; // reassigned below only in Mouse mode (Touch has no Hold button)
 
     const modeGroup = el("div", "wd-group");
     const head = el("div", "wd-group-head");
@@ -660,8 +691,20 @@ export class Controls {
     const items = el("div", "wd-group-items");
 
     if (this.interactMode === "mouse") {
+      // Compact, non-wrapping so all five buttons sit on ONE row (see .wd-compact-row).
+      items.classList.add("wd-compact-row");
       const left = iconBtn("mouse-left", "Left");
       left.onclick = () => input.click("left");
+      // Latched left-button HOLD, shown as a filled-left-button mouse ("Left" held). Press once to
+      // hold the host's left button DOWN, move the cursor to drag/resize a window on the dev machine,
+      // press again to release. Distinct from Drag (which only holds during a single continuous drag).
+      // The `on` state is driven by onLeftHoldChanged so it stays correct through auto-release too.
+      const holdLeft = iconBtn("mouse-left-hold", "Left");
+      holdLeft.title = "Hold the left button down — grab a window edge, move to resize/drag, tap again to release";
+      holdLeft.setAttribute("aria-label", "Hold the left mouse button down");
+      holdLeft.classList.toggle("on", input.getLeftHold());
+      holdLeft.onclick = () => input.setLeftHold(!input.getLeftHold());
+      this.holdLeftBtn = holdLeft;
       const right = iconBtn("mouse-right", "Right");
       right.onclick = () => input.click("right");
       const dbl = iconBtn("double-click", "Double");
@@ -672,7 +715,7 @@ export class Controls {
         input.setDragLock(on);
         dragHold.classList.toggle("on", on);
       };
-      items.append(left, right, dbl, dragHold);
+      items.append(left, holdLeft, right, dbl, dragHold);
     } else {
       const tap = iconBtn("pointer", "Tap");
       tap.onclick = () => input.click("left");
@@ -680,10 +723,9 @@ export class Controls {
       longPress.onclick = () => input.longPress();
       const swUp = holdBtn(iconBtn("scroll-up", "Up", "wd-btn"), () => input.swipe(0, -0.25));
       const swDown = holdBtn(iconBtn("scroll-down", "Down", "wd-btn"), () => input.swipe(0, 0.25));
-      const swLeft = btn("←");
-      swLeft.onclick = () => input.swipe(-0.25, 0);
-      const swRight = btn("→");
-      swRight.onclick = () => input.swipe(0.25, 0);
+      // Labeled like Up/Down (icon + text) instead of a bare arrow — there's room on the second row.
+      const swLeft = holdBtn(iconBtn("chevron-left", "Left", "wd-btn"), () => input.swipe(-0.25, 0));
+      const swRight = holdBtn(iconBtn("chevron-right", "Right", "wd-btn"), () => input.swipe(0.25, 0));
       const twoTap = btn("2 fingers");
       twoTap.onclick = () => input.click("right");
       items.append(tap, longPress, swUp, swDown, swLeft, swRight, twoTap);
@@ -700,13 +742,37 @@ export class Controls {
     this.promptInput = el("textarea", "wd-type-input");
     this.promptInput.placeholder = "Type to send to the focused app (URL, command, message…)";
     this.promptInput.rows = 2;
+    // Terminal-style history: ArrowUp/Down recall recently sent prompts (only when the caret is on
+    // the first/last line, so multi-line editing still works). Manual edits leave history mode.
+    this.promptInput.addEventListener("keydown", (e) => this.onPromptKey(e));
+    this.promptInput.addEventListener("input", () => {
+      this.histIndex = -1;
+      this.updateHistButtons();
+    });
+
+    // History recall (mobile has no ↑/↓ keys): a tiny stacked column — prev on top, next below —
+    // walks the recently sent prompts, restoring the in-progress draft when you step back past the
+    // newest (same feel as VS Code / GitHub Copilot chat history).
+    const histNav = el("div", "wd-type-history");
+    const histPrev = iconBtn("chevron-up", "", "wd-btn wd-icon-only wd-hist-btn");
+    histPrev.title = "Recall previous prompt";
+    histPrev.setAttribute("aria-label", "Recall previous prompt");
+    histPrev.onclick = () => this.recallPrev();
+    const histNext = iconBtn("chevron-down", "", "wd-btn wd-icon-only wd-hist-btn");
+    histNext.title = "Recall next prompt";
+    histNext.setAttribute("aria-label", "Recall next prompt");
+    histNext.onclick = () => this.recallNext();
+    histNav.append(histPrev, histNext);
+    this.histPrevBtn = histPrev;
+    this.histNextBtn = histNext;
+    this.updateHistButtons();
 
     // The Whipository button lives right next to the box it injects into (on the right), so it's
     // obvious the saved whip lands in THIS textarea — not straight on the host. Same square-icon
     // treatment as the scheduled-work prompt entry.
     const inputRow = el("div", "wd-type-input-row");
     const whipsBeside = whipButton(() => this.deps.whipository.open((text) => this.insertIntoPrompt(text)));
-    inputRow.append(this.promptInput, whipsBeside);
+    inputRow.append(this.promptInput, histNav, whipsBeside);
 
     // Special keys wrap together so no single key takes a whole row.
     const keys = el("div", "wd-wrap");
@@ -741,6 +807,76 @@ export class Controls {
 
     pane.append(inputRow, keys, actions);
     return pane;
+  }
+
+  // ---- Type-tab prompt history (terminal-style ↑/↓ recall) ------------------
+  private onPromptKey(e: KeyboardEvent): void {
+    if (e.key === "ArrowUp" && this.caretOnFirstLine()) {
+      e.preventDefault();
+      this.recallPrev();
+    } else if (e.key === "ArrowDown" && this.caretOnLastLine()) {
+      e.preventDefault();
+      this.recallNext();
+    }
+  }
+
+  /** True when the caret is a collapsed selection on the FIRST line (no newline before it). */
+  private caretOnFirstLine(): boolean {
+    const ta = this.promptInput;
+    if (ta.selectionStart !== ta.selectionEnd) return false;
+    return ta.value.lastIndexOf("\n", ta.selectionStart - 1) === -1;
+  }
+
+  /** True when the caret is a collapsed selection on the LAST line (no newline at/after it). */
+  private caretOnLastLine(): boolean {
+    const ta = this.promptInput;
+    if (ta.selectionStart !== ta.selectionEnd) return false;
+    return ta.value.indexOf("\n", ta.selectionStart) === -1;
+  }
+
+  /** Walk to an older prompt (↑). Snapshots the in-progress draft the first time we leave the bottom. */
+  private recallPrev(): void {
+    const items = this.typeHistory.list();
+    if (items.length === 0) return;
+    if (this.histIndex < 0 || this.histIndex > items.length) this.histIndex = items.length; // normalize to bottom
+    if (this.histIndex === items.length) this.histDraft = this.promptInput.value;
+    if (this.histIndex === 0) return; // already at the oldest entry
+    this.histIndex -= 1;
+    this.setPromptValue(items[this.histIndex] ?? "");
+    this.updateHistButtons();
+  }
+
+  /** Walk toward newer prompts (↓); stepping past the newest restores the saved draft. */
+  private recallNext(): void {
+    const items = this.typeHistory.list();
+    if (this.histIndex < 0 || this.histIndex >= items.length) return; // already at the draft/bottom
+    this.histIndex += 1;
+    if (this.histIndex >= items.length) {
+      this.histIndex = items.length;
+      this.setPromptValue(this.histDraft);
+    } else {
+      this.setPromptValue(items[this.histIndex] ?? "");
+    }
+    this.updateHistButtons();
+  }
+
+  /** Grey out ↑ when there's nothing older to recall and ↓ when we're already back at the live draft,
+   *  so the arrows show at a glance which end of the history you're on (like a shell's ↑/↓ bounds). */
+  private updateHistButtons(): void {
+    if (!this.histPrevBtn || !this.histNextBtn) return;
+    const n = this.typeHistory.list().length;
+    const atBottom = this.histIndex < 0 || this.histIndex >= n; // showing the live draft, not a recalled entry
+    this.histPrevBtn.disabled = n === 0 || this.histIndex === 0; // nothing older left
+    this.histNextBtn.disabled = atBottom; // nothing newer than the draft
+  }
+
+  /** Replace the prompt text and drop the caret at the end (so the next ↑/↓ keeps navigating). */
+  private setPromptValue(text: string): void {
+    const ta = this.promptInput;
+    ta.value = text;
+    const end = text.length;
+    ta.setSelectionRange(end, end);
+    ta.focus();
   }
 
   /** Insert whip text at the cursor of the Type textarea (replacing any selection). */
@@ -855,6 +991,10 @@ export class Controls {
     const text = this.promptInput.value;
     if (!text) return;
     this.deps.conn.send({ type: "type", text, submit });
+    this.typeHistory.add(text); // remember it for ↑/↓ recall
     this.promptInput.value = "";
+    this.histIndex = -1;
+    this.histDraft = "";
+    this.updateHistButtons();
   }
 }

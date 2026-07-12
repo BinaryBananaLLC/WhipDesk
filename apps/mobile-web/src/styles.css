@@ -412,6 +412,26 @@ textarea {
   flex-wrap: wrap;
   justify-content: center;
 }
+/* Interact → Mouse row: the five buttons (Left, Left-hold, Right, Double, Drag) share ONE line and
+   keep the normal full-size horizontal icon+label look. Each is sized from its own content
+   (flex-basis:auto) and then grows to split any leftover width, so a roomy screen gives roomy,
+   evenly balanced buttons and a narrow phone only trims the longest label. It shrinks when it must,
+   not by default — min-width:0 + label ellipsis is the graceful last step instead of wrapping. */
+.wd-group-items.wd-compact-row {
+  flex-wrap: nowrap;
+  gap: 6px;
+  width: 100%;
+}
+.wd-group-items.wd-compact-row .wd-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 6px;
+  padding: 8px 8px;
+}
+.wd-group-items.wd-compact-row .wd-btn .wd-btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .wd-btn-label {
   line-height: 1;
 }
@@ -667,6 +687,33 @@ textarea {
 .wd-type-input-row .wd-whips-btn {
   align-self: flex-start;
 }
+/* Prompt-history recall: a slim stacked ↑/↓ column between the textarea and the Whipository button. */
+.wd-type-history {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: none;
+  align-self: flex-start;
+}
+.wd-type-history .wd-hist-btn {
+  min-width: 34px;
+  min-height: 0;
+  height: 21px;
+  padding: 0;
+}
+.wd-type-history .wd-hist-btn svg {
+  width: 16px;
+  height: 16px;
+}
+/* Disabled = you're at that end of the history (nothing older to recall / already back at the draft). */
+.wd-type-history .wd-hist-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.wd-type-history .wd-hist-btn:disabled:active {
+  background: var(--panel);
+  transform: none;
+}
 /* Whipository icon button: the raster mark fills the square button, matching the SVG icon buttons. */
 .wd-whips-btn img {
   width: 24px;
@@ -825,6 +872,40 @@ textarea {
 @keyframes wd-sharpen-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* Latched "left button held" indicator (Task 1). Floats near the top so the held state is obvious
+   even when the ribbon is collapsed; tapping it releases the button. */
+.wd-hold-pill {
+  position: fixed;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font: 600 13px/1 system-ui, sans-serif;
+  box-shadow: 0 2px 10px var(--shadow);
+  cursor: pointer;
+  z-index: 25;
+  animation: wd-hold-pulse 1.4s ease-in-out infinite;
+}
+.wd-hold-pill svg {
+  stroke: #fff;
+}
+@keyframes wd-hold-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
   }
 }
 

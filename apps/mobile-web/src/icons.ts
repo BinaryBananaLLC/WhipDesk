@@ -22,6 +22,7 @@ export type IconName =
   | "page-up"
   | "page-down"
   | "mouse-left"
+  | "mouse-left-hold"
   | "mouse-right"
   | "double-click"
   | "drag"
@@ -65,6 +66,11 @@ const PATHS: Record<IconName, string> = {
   "page-up": '<path d="M5 4h14"/><path d="m7 13 5-5 5 5"/><path d="M12 9v11"/>',
   "page-down": '<path d="M5 20h14"/><path d="m7 11 5 5 5-5"/><path d="M12 15V4"/>',
   "mouse-left": '<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v8H6V8"/>',
+  // Left button FILLED = "left button held down" (the latched hold / resize toggle). The solid
+  // left quadrant reads as a pressed button regardless of the button's on/off tint.
+  "mouse-left-hold":
+    '<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v8"/>' +
+    '<path fill="currentColor" stroke="none" d="M12 3.2V11H6.2V8.2A5.8 5.8 0 0 1 12 3.2Z"/>',
   "mouse-right": '<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v8h6V8"/>',
   "double-click": '<path d="m4 4 6 16 2.5-6.5L19 11Z"/><path d="M18 4v3M21 6h-3"/>',
   drag: '<path d="M12 2v20M2 12h20" /><path d="m8 6 4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>',
