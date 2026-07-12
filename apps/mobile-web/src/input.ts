@@ -35,8 +35,6 @@ interface Pointer {
 const TAP_MS = 250;
 const LONG_PRESS_MS = 500;
 const MOVE_THRESHOLD = 8; // css px
-/** Min ms between host cursor updates while a desktop mouse just glides (hover-follow). */
-const HOVER_SEND_MS = 50;
 
 export interface InputCallbacks {
   /** Cursor moved (normalized). Lets the UI mirror position if needed. */
@@ -57,14 +55,18 @@ export class InputController {
   private dragScroll = false; // one-finger drag scrolls instead of moving the pointer
   private pan = false; // one-finger drag pans the zoomed view (viewer only), like a minimap
   private holdingLeft = false;
+  // A LATCHED left-button-down state (mouse mode). Unlike dragLock (which holds the button only for
+  // the duration of one continuous drag), this keeps the host's left button pressed across separate
+  // taps/drags until the user toggles it off — so you can grab a window edge on the dev machine, move
+  // the cursor, and RESIZE/DRAG the window, then release. See setLeftHold.
+  private leftHeldToggle = false;
+  private leftHoldListener: ((held: boolean) => void) | null = null;
   private cursor = { nx: 0.5, ny: 0.5 };
 
   private readonly pointers = new Map<number, Pointer>();
   private longPressTimer = 0;
   private twoFinger: { dist: number; mx: number; my: number; start: number; moved: boolean } | null = null;
   private suppressTap = false;
-  private hoverSentAt = 0;
-  private hoverTrailing = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -88,6 +90,9 @@ export class InputController {
   setInteraction(kind: Interaction): void {
     this.interaction = kind;
     if (kind === "viewer") this.dragLock = false;
+    // A latched button hold only makes sense while directing the mouse (Interact mode); leaving it
+    // must release the button so it can't get stuck down on the host.
+    if (kind !== "mouse") this.setLeftHold(false);
   }
   getInteraction(): Interaction {
     return this.interaction;
@@ -100,6 +105,33 @@ export class InputController {
   }
   getDragLock(): boolean {
     return this.dragLock;
+  }
+  /**
+   * Latch the host's LEFT button down (or release it). While latched, touching/dragging the screen
+   * only REPOSITIONS the held pointer (never clicks, never releases) — so you can park the cursor on
+   * a window edge, toggle this on, then move the cursor to drag/resize the window on the dev machine,
+   * and toggle off to drop it. No-ops if the state is unchanged. The listener lets the UI mirror the
+   * held state (button highlight + a persistent "left button held" pill).
+   */
+  setLeftHold(on: boolean): void {
+    if (on === this.leftHeldToggle) return;
+    this.leftHeldToggle = on;
+    if (on) {
+      this.holdingLeft = true;
+      this.send({ type: "pointer", action: "down", button: "left", x: this.cursor.nx, y: this.cursor.ny });
+      navigator.vibrate?.(20);
+    } else {
+      this.holdingLeft = false;
+      this.send({ type: "pointer", action: "up", button: "left" });
+      navigator.vibrate?.(12);
+    }
+    this.leftHoldListener?.(on);
+  }
+  getLeftHold(): boolean {
+    return this.leftHeldToggle;
+  }
+  setLeftHoldListener(fn: (held: boolean) => void): void {
+    this.leftHoldListener = fn;
   }
   setDragScroll(on: boolean): void {
     this.dragScroll = on;
@@ -201,8 +233,9 @@ export class InputController {
       // First finger down = a pan/zoom gesture may be starting. Defer host re-crops until it ends.
       this.view.beginViewGesture();
       window.clearTimeout(this.longPressTimer);
-      // Long-press = right click only in Mouse mode (Touch has no right click).
-      if (this.interaction === "mouse" && !this.dragScroll) {
+      // Long-press = right click only in Mouse mode (Touch has no right click). Suppressed while the
+      // left button is latched down — a hold-drag must not fire a right click mid-resize.
+      if (this.interaction === "mouse" && !this.dragScroll && !this.leftHeldToggle) {
         this.longPressTimer = window.setTimeout(() => this.onLongPress(), LONG_PRESS_MS);
       }
       // Absolute modes snap the pointer to the touch point (unless we're drag-scrolling/panning).
@@ -252,37 +285,14 @@ export class InputController {
     };
   }
 
-  /**
-   * Hover-follow (desktop controllers): a mouse gliding over the canvas with no button down still
-   * moves the host cursor, so you can SEE where you are on the remote screen before clicking —
-   * exactly like sitting at the machine. Throttled to one host update per HOVER_SEND_MS (it may
-   * lag a touch, never flood the channel), with a trailing send so the cursor always comes to rest
-   * where the mouse did. Touch can't hover, and Touch mode simulates a hoverless touchscreen.
-   */
-  private onHoverMove(e: PointerEvent): void {
-    if (e.pointerType !== "mouse" || e.buttons !== 0 || this.interaction === "touch") return;
-    const p = this.positionOf(e);
-    const n = this.view.canvasToNorm(p.x, p.y);
-    this.moveCursor(n.nx, n.ny); // the local ring tracks every frame; only host sends are throttled
-    window.clearTimeout(this.hoverTrailing);
-    const now = performance.now();
-    if (now - this.hoverSentAt < HOVER_SEND_MS) {
-      this.hoverTrailing = window.setTimeout(() => {
-        this.hoverSentAt = performance.now();
-        this.send({ type: "pointer", action: "move", x: this.cursor.nx, y: this.cursor.ny });
-      }, HOVER_SEND_MS);
-      return;
-    }
-    this.hoverSentAt = now;
-    this.send({ type: "pointer", action: "move", x: this.cursor.nx, y: this.cursor.ny });
-  }
-
+  // NOTE: bare hover (mouse gliding with no button down) is deliberately ignored — the host
+  // cursor must NOT shadow the controller's mouse. Users park the pointer somewhere on the
+  // remote screen and then reach for the Interact buttons (Click / Right / Double); a
+  // hover-follow would drag the host cursor away on the way to those buttons (tried 2026-07-10,
+  // reverted the same day).
   private onMove(e: PointerEvent): void {
     const ptr = this.pointers.get(e.pointerId);
-    if (!ptr) {
-      this.onHoverMove(e);
-      return;
-    }
+    if (!ptr) return;
     const p = this.positionOf(e);
     const prevX = ptr.x;
     const prevY = ptr.y;
@@ -385,6 +395,18 @@ export class InputController {
       this.twoFinger = null;
       this.suppressTap = true; // the remaining finger's lift must not click
       for (const remaining of this.pointers.values()) remaining.consumed = true;
+      return;
+    }
+
+    // Latched left-hold (Hold toggle): a lift only REPOSITIONS the still-held pointer to the touch
+    // point (dragging the grabbed window edge there) — it must never click and never release. The
+    // button stays down until the user toggles Hold off (setLeftHold(false)).
+    if (this.leftHeldToggle) {
+      if (ptr && !ptr.consumed && this.pointers.size === 0 && !this.isPanning()) {
+        const n = this.view.canvasToNorm(ptr.x, ptr.y);
+        this.moveCursor(n.nx, n.ny);
+        this.send({ type: "pointer", action: "move", x: n.nx, y: n.ny });
+      }
       return;
     }
 
