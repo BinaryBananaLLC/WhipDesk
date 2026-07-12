@@ -365,16 +365,31 @@ jobs:
     # — and an agent run from source then reports an old version, which the whipdesk.com dashboard
     # flags as "update available". After a successful release, write the released version back to
     # the branch the tag was cut from (package.json + lockfile + src/version.ts) so the repo, npm,
-    # and the release tag all agree. GITHUB_TOKEN pushes don't re-trigger this workflow (it only
-    # fires on v* tags / manual dispatch), so there is no loop.
+    # and the release tag all agree. This workflow fires only on v* tags / manual dispatch, and the
+    # sync commit is a plain branch commit carrying [skip ci], so it re-triggers neither this workflow
+    # nor any push-triggered CI — no loop. The push authenticates as a GitHub App (added to the branch
+    # ruleset's bypass list) because the default GITHUB_TOKEN / github-actions[bot] cannot be a bypass
+    # actor; see docs/RELEASING.md for the one-time app + secrets setup.
     needs: [resolve, release]
     if: ${{ needs.resolve.outputs.prerelease == 'false' }}
     runs-on: ubuntu-latest
     steps:
+      # The default GITHUB_TOKEN / github-actions[bot] cannot be added to a ruleset's bypass list, so
+      # the commit below would be rejected on the protected default branch (PR-required + CLA check).
+      # Mint an installation token for a GitHub App that IS on the ruleset bypass list and push as it.
+      - name: Mint GitHub App token (ruleset bypass actor)
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           # Dispatch runs know the branch the tag was cut from; tag pushes fall back to the default.
           ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || github.event.repository.default_branch }}
+          # Persist the APP token as the push credential (not GITHUB_TOKEN) so the push is attributed
+          # to the bypass-listed app and is allowed onto the protected branch.
+          token: ${{ steps.app-token.outputs.token }}
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ env.NODE_VERSION }}

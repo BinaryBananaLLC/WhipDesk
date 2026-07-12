@@ -76,6 +76,7 @@ are frozen.
 | `APPLE_API_KEY` | base64 of the App Store Connect API key (`.p8`) | notarization |
 | `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | notarytool key id + issuer | notarization |
 | `NPM_TOKEN` | npm automation token with publish rights to `whipdesk` | npm publish |
+| `RELEASE_BOT_APP_ID`, `RELEASE_BOT_PRIVATE_KEY` | GitHub App id + `.pem` private key for a bot on the branch ruleset's **bypass list** | `sync-version` push to `main` (see below) |
 | `HOMEBREW_TAP_TOKEN` | *(optional)* PAT with write access to the `homebrew-whipdesk` tap | Homebrew cask update |
 | `SCOOP_TAP_TOKEN` | *(optional)* PAT with write access to the `scoop-whipdesk` bucket repo | Scoop manifest update |
 | `WINGET_TOKEN` | *(optional)* classic PAT (`public_repo`) on a fork of `microsoft/winget-pkgs` | winget manifest PR |
@@ -106,6 +107,32 @@ on case-insensitive APFS) is detected by macOS as a legacy *flat bundle*, so the
 lone-Mach-O signature as invalid. Nesting under `libexec` makes the executable's parent dir name differ
 from the executable name, keeping it a plain directory; `/usr/local/bin/whipdesk` symlinks to it. Both
 the arm64 and x64 `.pkg`s are verified to notarize + staple end-to-end.
+
+## Release-bot GitHub App — branch-ruleset bypass (one-time)
+
+After a release, the `sync-version` job commits the released version back to `main`
+(`package.json` + lockfile + `src/version.ts`) so the repo, npm, and the tag agree. `main` is
+protected by a **ruleset** (PR-required + the `CLA Assistant` status check), which rejects that
+direct push. The default `GITHUB_TOKEN` / `github-actions[bot]` **cannot** be added to a ruleset
+bypass list — GitHub only allows roles, teams, GitHub Apps, and Dependabot — so the job pushes as a
+GitHub App that *is* on the bypass list.
+
+1. **Create the app** — org **Settings → Developer settings → GitHub Apps → New GitHub App**:
+   name e.g. `WhipDesk Release Bot`, any homepage URL, **uncheck** Webhook → Active, and set
+   **Repository permissions → Contents: Read and write** (nothing else). Install location:
+   *Only on this account*. Create it and note the **App ID**.
+2. **Private key** — on the app's page, **Generate a private key** (downloads a `.pem`).
+3. **Install it** — app → **Install App** → the `BinaryBananaLLC` account → **Only select
+   repositories → WhipDesk**.
+4. **Add secrets** — WhipDesk → **Settings → Secrets and variables → Actions**:
+   `RELEASE_BOT_APP_ID` = the App ID, `RELEASE_BOT_PRIVATE_KEY` = the full `.pem` contents.
+5. **Bypass list** — WhipDesk → **Settings → Rules → Rulesets** → the ruleset protecting `main` →
+   **Bypass list → Add bypass** → select the app → mode **Always allow** (not "For pull requests
+   only", since this is a direct push) → **Save**.
+
+The sync commit carries `[skip ci]`, so it never re-triggers CI or this workflow — no loop. Until
+these secrets + bypass exist, only the cosmetic `sync-version` job fails; the release, npm, and
+package updates all still succeed.
 
 ## Homebrew tap setup (one-time)
 
