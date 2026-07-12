@@ -5,19 +5,28 @@
 // and is (re)built by `prepublishOnly`.
 import { spawnSync } from "node:child_process";
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
+
+const require = createRequire(import.meta.url);
 
 // Deps kept OUT of the JS bundle — because they carry a native addon or a bundled binary/asset,
 // resolve paths via __dirname, or use legacy syntax esbuild won't inline (qrcode-terminal's octal
 // escapes). They resolve at runtime from node_modules: the user's for `npm i -g`, the sibling
 // resources/node_modules for the SEA build (see build-sea.mjs).
+//
+// `@nut-tree-fork/nut-js` and `screenshot-desktop` are deliberately NOT here: they're pure JS (nut.js
+// only needs the native @nut-tree-fork/libnut, which IS external; screenshot-desktop just shells to
+// the OS screengrabber), so we INLINE them. That keeps their deprecated transitive deps
+// (jimp→…→phin, temp→rimraf→glob→inflight) out of the user's `npm i -g whipdesk` tree — those
+// packages are no-longer-supported and print install-time warnings, but bundled into agent.cjs they
+// are never installed. See the punycode alias below, which finishes the job for nut.js/jimp.
 export const EXTERNAL = [
   "ffmpeg-static",
-  "screenshot-desktop",
   "sharp",
-  "@nut-tree-fork/nut-js",
+  "@nut-tree-fork/libnut",
   "werift",
   "qrcode-terminal",
 ];
@@ -69,6 +78,12 @@ export async function buildBundle() {
     target: "node20",
     outfile: join(agentDir, "dist/agent.cjs"),
     external: EXTERNAL,
+    // jimp (inlined via nut.js) reaches whatwg-url, which does `require("punycode")` at load. Bare
+    // "punycode" resolves to Node's BUILTIN, which prints a [DEP0040] deprecation warning at runtime.
+    // Redirect it to the maintained userland `punycode` package (a devDep) so esbuild inlines that
+    // instead — no builtin access, no warning. (Only the builtin is deprecated; the npm package is
+    // the reference implementation and is fine.)
+    alias: { punycode: require.resolve("punycode/") },
     // `import.meta.url` has no meaning in a CJS bundle (esbuild would leave it undefined), but
     // paths.ts/optional-import.ts rely on it to anchor module resolution + detect a packaged build.
     // Point it at the bundle file itself (CJS __filename) so createRequire resolves from the sibling

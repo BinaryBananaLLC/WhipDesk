@@ -100,9 +100,30 @@ jobs:
             echo "Created tag $TAG at $GITHUB_SHA (HEAD of the selected branch)."
           fi
 
+  # Blocks the ENTIRE release (before the 5 platform builds) if `npm install -g whipdesk` would show
+  # users any deprecation warning. Packs the published package and installs it into a throwaway
+  # project with only production deps, failing on any `npm warn deprecated`. Deprecation status is
+  # per package@version, so this ubuntu run represents macOS/Windows npm installs too;
+  # brew/scoop/winget ship the pre-built SEA (deps pre-bundled) and never run npm install.
+  install-warnings:
+    name: No deprecated deps (npm install -g)
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Assert clean production install tree
+        run: npm run check:install-clean --workspace whipdesk
+
   build:
     name: Build ${{ matrix.target }}
-    needs: resolve
+    needs: [resolve, install-warnings]
     strategy:
       fail-fast: false
       matrix:

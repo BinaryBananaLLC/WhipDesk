@@ -1,8 +1,9 @@
 name: CI
 
 # Runs on every PR and push to main: typecheck + unit tests (incl. the auth-handshake
-# integration test) on all three host platforms, both build pipelines, and a production-deps
-# vulnerability audit. Actions are pinned by commit SHA (supply-chain hygiene).
+# integration test) on all three host platforms, both build pipelines, a production-deps
+# vulnerability audit, and a gate proving `npm install -g whipdesk` shows users no deprecation
+# warnings. Actions are pinned by commit SHA (supply-chain hygiene).
 on:
   push:
     branches: [main]
@@ -55,7 +56,7 @@ jobs:
 
       - run: npm ci
 
-      # Hard gate: the REQUIRED production deps must be clean. Optional deps (werift, nut-js)
+      # Hard gate: the REQUIRED production deps must be clean. Optional deps (werift, sharp, libnut)
       # carry upstream advisories with no fixed release (e.g. `ip` via werift-ice) — those are
       # reported below without failing the build, and Dependabot picks up fixes when they ship.
       - name: Audit required production dependencies (gate)
@@ -63,3 +64,21 @@ jobs:
 
       - name: Audit all dependencies (report only)
         run: npm audit || true
+
+  install-warnings:
+    name: No deprecated deps (npm install -g)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Hard gate: `npm install -g whipdesk` must show users ZERO deprecation warnings. Packs the
+      # published package and installs it into a throwaway project with only production deps, failing
+      # if npm prints any `npm warn deprecated`. Deprecation status is per package@version, so this
+      # one ubuntu run represents macOS/Windows installs too (brew/scoop/winget ship the pre-built
+      # SEA and never run npm install). See the script header for the full rationale.
+      - name: Assert clean production install tree
+        run: npm run check:install-clean --workspace whipdesk

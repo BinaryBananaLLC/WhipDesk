@@ -7,7 +7,7 @@
   <true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
   <true/>
-  <!-- Load the sidecar native addons (sharp, nut.js) that ship in resources/node_modules. -->
+  <!-- Load the sidecar native addons (sharp, libnut) that ship in resources/node_modules. -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>

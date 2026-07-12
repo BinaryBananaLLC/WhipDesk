@@ -32,6 +32,7 @@
     "test": "tsx --test src/security/pin.test.ts src/monitor/state.test.ts src/transport/session.test.ts",
     "build:bundle": "node scripts/build-bundle.mjs",
     "build:sea": "node scripts/build-sea.mjs",
+    "check:install-clean": "node scripts/check-install-clean.mjs",
     "prepublishOnly": "node scripts/build-bundle.mjs"
   },
   "dependencies": {
@@ -41,12 +42,12 @@
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
-    "@nut-tree-fork/nut-js": "^4.2.0",
-    "screenshot-desktop": "^1.15.1",
+    "@nut-tree-fork/libnut": "^4.2.0",
     "sharp": "^0.35.3",
     "werift": "^0.23.0"
   },
   "devDependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.0",
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.0",
     "@types/qrcode-terminal": "^0.12.2",
@@ -54,6 +55,8 @@
     "@whipdesk/protocol": "*",
     "esbuild": "^0.28.1",
     "postject": "^1.0.0-alpha.6",
+    "punycode": "^2.3.1",
+    "screenshot-desktop": "^1.15.1",
     "tsx": "^4.22.5",
     "typescript": "^6.0.3"
   }

@@ -55,10 +55,18 @@ export class ScreenCapturer {
     await this.getSharp();
   }
 
-  /** Lazy-load screenshot-desktop (non-Windows only) so the Windows bundle never ships it. */
+  /** Lazy-load screenshot-desktop (non-Windows only). Static specifier so esbuild INLINES it into
+   * agent.cjs — it's pure JS that shells to the OS screengrabber, so keeping it out of the runtime
+   * dependency tree also keeps its deprecated deps (temp→rimraf→glob→inflight) out of the user's
+   * `npm i -g whipdesk` install. Windows never reaches this path (it uses the ffmpeg sampler). */
   private async getShot(): Promise<any> {
     if (this.shot !== undefined) return this.shot;
-    const mod = await optionalImport("screenshot-desktop");
+    let mod: any = null;
+    try {
+      mod = await import("screenshot-desktop");
+    } catch {
+      /* inlined, so this only trips if the OS screengrabber itself is unavailable at call time */
+    }
     this.shot = mod ? (mod.default ?? mod) : null;
     if (!this.shot) log.warn("screenshot-desktop not available — region change-watchers disabled");
     return this.shot;

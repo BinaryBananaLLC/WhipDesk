@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { DisplayInfo, ScreenInfo } from "@whipdesk/protocol";
-import { optionalImport } from "../util/optional-import";
 import { listWindowsDisplays } from "./displays-win";
 import { log } from "../logger";
 
@@ -74,7 +73,8 @@ function friendlyDisplayName(raw: unknown, index: number): string {
  * Non-Windows only — Windows enumerates natively (listWindowsDisplays) so it can drop the dep. */
 async function listBaseDisplays(): Promise<Array<{ id: number; name: string; primary: boolean }>> {
   try {
-    const mod = await optionalImport("screenshot-desktop");
+    // Static specifier so esbuild INLINES screenshot-desktop into agent.cjs (see screen.ts getShot).
+    const mod: any = await import("screenshot-desktop");
     const screenshot = mod ? (mod.default ?? mod) : null;
     if (!screenshot) {
       log.warn("screenshot-desktop not available — assuming a single primary display");

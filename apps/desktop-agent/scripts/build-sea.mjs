@@ -5,8 +5,8 @@
 //     resources/
 //       app.cjs                   <- esbuild bundle of the agent (pure-JS deps inlined)
 //       node_modules/             <- ONLY the native/asset deps, installed for this platform
-//                                    (ffmpeg-static + its ffmpeg binary, sharp, nut.js, werift,
-//                                     screenshot-desktop)
+//                                    (ffmpeg-static + its ffmpeg binary, sharp, @nut-tree-fork/libnut,
+//                                     werift)
 //
 // The loader boots resources/app.cjs so those deps resolve like a normal install (see
 // scripts/sea-loader.cjs). Signing / notarization / .pkg / archiving are layered on top of
@@ -61,18 +61,16 @@ copyFileSync(join(distDir, "agent.cjs"), join(resourcesDir, "app.cjs"));
 cpSync(join(distDir, "mobile-web"), join(resourcesDir, "mobile-web"), { recursive: true }); // LAN controller PWA
 
 // 3) Install ONLY the external deps into resources/node_modules for THIS platform (runs the
-//    ffmpeg-static / sharp / nut.js install scripts that fetch per-platform binaries).
-// Windows deliberately DROPS screenshot-desktop: its win32 helper (a csc-compiled screen-capture
-// .exe) trips ESET's MSIL/CaptureScreen.A PUA scan and blocks winget/Store binary validation. On
-// Windows the sampler + display list use the bundled ffmpeg / native probes instead (win-capture.ts,
-// displays-win.ts), so nothing here depends on it.
+//    ffmpeg-static / sharp / libnut install scripts that fetch per-platform binaries).
+// screenshot-desktop is no longer installed here: it's inlined into app.cjs (build-bundle.mjs), and
+// only its JS ships — its ESET-flagged win32 helper .exe is never bundled. On Windows the sampler +
+// display list use the ffmpeg path / native probes anyway (win-capture.ts, displays-win.ts).
 const deps = { ...pkg.dependencies, ...pkg.optionalDependencies };
-const bundledExternal = EXTERNAL.filter((n) => !(isWin && n === "screenshot-desktop"));
 const stageManifest = {
   name: "whipdesk-resources",
   private: true,
   version: pkg.version,
-  dependencies: Object.fromEntries(bundledExternal.map((n) => [n, deps[n] ?? "*"])),
+  dependencies: Object.fromEntries(EXTERNAL.map((n) => [n, deps[n] ?? "*"])),
 };
 writeFileSync(join(resourcesDir, "package.json"), JSON.stringify(stageManifest, null, 2));
 run("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--no-package-lock"], { cwd: resourcesDir });

@@ -1,5 +1,4 @@
 import type { MouseButton } from "@whipdesk/protocol";
-import { optionalImport } from "../util/optional-import";
 import { log } from "../logger";
 import { clamp01, type ActiveDisplay, type InputBackend, type ScreenSize } from "./types";
 
@@ -8,7 +7,17 @@ import { clamp01, type ActiveDisplay, type InputBackend, type ScreenSize } from 
  * Returns null if the native module can't load, so the selector can fall back.
  */
 export async function createNutBackend(): Promise<InputBackend | null> {
-  const nut = await optionalImport("@nut-tree-fork/nut-js");
+  // Static specifier so esbuild INLINES nut.js (+ its pure-JS jimp tree) into agent.cjs; only the
+  // native @nut-tree-fork/libnut stays an external, per-platform install. This keeps jimp→…→phin
+  // (a no-longer-supported package) out of the user's `npm i -g whipdesk` dependency tree. The
+  // inlined module still `require`s the native libnut at first use, so a missing/broken native
+  // binary rejects here and we fall back — same graceful degradation as before.
+  let nut: any;
+  try {
+    nut = await import("@nut-tree-fork/nut-js");
+  } catch {
+    return null;
+  }
   if (!nut) return null;
 
   const { mouse, keyboard, Button, Key, Point, screen } = nut;
