@@ -421,35 +421,61 @@ async function start(): Promise<void> {
     });
   }
 
-  // Pause host capture while hidden (battery), and proactively rebuild the WebRTC link when we
-  // return — a backgrounded mobile tab often has its peer connection frozen/killed with no event.
-  // This is SEAMLESS by design: the PIN is remembered in memory across a background/bfcache resume,
-  // so re-auth is silent (no PIN, no prompt). The resume PROMPT is NOT used here — it's only for a
-  // full reload/discard, where JS memory (and the remembered PIN) is gone, handled once at startup
-  // below. `pageshow` also covers bfcache restores that skip visibilitychange.
+  // Pause host capture while hidden (battery), and handle coming back to a backgrounded tab — whose
+  // WebRTC session a mobile browser often freezes/kills with no event. Two return paths:
+  //   • Short glance away (< RESUME_AWAY_MS): rebuild SEAMLESSLY. The PIN is remembered in memory
+  //     across a background/bfcache resume, so re-auth is silent (no PIN, no prompt).
+  //   • Long absence (≥ RESUME_AWAY_MS) with the link down: don't silently spend a fresh TURN
+  //     allocation + reconnect. Show the friendly "Welcome back — Resume?" gate first and do nothing
+  //     until the user chooses. `close()` stops the passive reconnect/backoff so nothing races the
+  //     gate; Resume → `connect()` rebuilds (remembered PIN still replays silently).
+  // A full reload/discard (JS memory gone) is still gated once at startup, below.
+  const RESUME_AWAY_MS = 120_000; // ~2 minutes
+  let hiddenAt = 0;
+  const markHidden = () => {
+    if (!hiddenAt) hiddenAt = Date.now();
+  };
   const resumeIfNeeded = () => {
     if (document.hidden || conn.isHealthy()) return;
     resuming = true;
     connecting.show("Reconnecting…");
     conn.wake();
   };
+  const handleReturn = () => {
+    if (document.hidden || resumePrompt.visible) return;
+    const awayMs = hiddenAt ? Date.now() - hiddenAt : 0;
+    hiddenAt = 0;
+    // Long absence + dead link on a cloud session: gate the reconnect behind the Resume dialog.
+    if (remote && device && welcomed && awayMs >= RESUME_AWAY_MS && !conn.isHealthy()) {
+      conn.close(); // halt passive reconnect so nothing connects behind the gate
+      connecting.hide();
+      resumePrompt.show(() => {
+        resuming = true;
+        connecting.show("Reconnecting…");
+        conn.connect();
+      });
+      return;
+    }
+    resumeIfNeeded();
+    // A backgrounded tab has its <video> sinks auto-paused by the browser; when the link stayed
+    // healthy (so no rebuild/new-track fires) they'd otherwise stay frozen on the last frame even
+    // as fresh RTP arrives. Nudge them back to playing on every foreground.
+    void videoEl.play().catch(() => {});
+    void overviewEl.play().catch(() => {});
+  };
   document.addEventListener("visibilitychange", () => {
     conn.setVisible(!document.hidden);
-    if (!document.hidden) {
-      resumeIfNeeded();
-      // A backgrounded tab has its <video> sinks auto-paused by the browser; when the link stayed
-      // healthy (so no rebuild/new-track fires) they'd otherwise stay frozen on the last frame even
-      // as fresh RTP arrives. Nudge them back to playing on every foreground.
-      void videoEl.play().catch(() => {});
-      void overviewEl.play().catch(() => {});
-    }
+    if (document.hidden) markHidden();
+    else handleReturn();
   });
-  window.addEventListener("pageshow", resumeIfNeeded);
+  window.addEventListener("pageshow", handleReturn);
   // Real unload (refresh/navigate-away, not a bfcache freeze): close the session gracefully so the
   // agent drops us from its viewer count immediately instead of waiting out the ICE consent
-  // timeout. bfcache restores re-enter via pageshow → resumeIfNeeded, which rebuilds the link.
+  // timeout. bfcache freeze (persisted) instead marks the away time so a long bfcache stay also
+  // gates on return via pageshow → handleReturn.
   window.addEventListener("pagehide", (e) => {
-    if (!e.persisted) conn.close();
+    if (e.persisted) markHidden();
+    else conn.close();
   });
 
   // Back-button guard (remote/dashboard sessions only): a single Back used to silently drop the
