@@ -1,4 +1,6 @@
-// Release gate: guarantees `npm install -g whipdesk` shows users NO warnings and errors.
+// Release gate: guarantees `npm install -g whipdesk` shows users NO warnings and errors, and that
+// every module the bundle resolves at runtime (build-bundle.mjs EXTERNAL) actually loads from the
+// installed production tree.
 //
 // Why this exists: anyone installing from npm sees every `npm warn deprecated` in the package's
 // PRODUCTION dependency closure (dependencies + optionalDependencies — devDeps are never installed
@@ -23,6 +25,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { EXTERNAL } from "./build-bundle.mjs";
 
 const agentDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(agentDir, "package.json"), "utf8"));
@@ -88,9 +91,35 @@ try {
     process.exit(res.code);
   }
 
+  // 4) Every EXTERNAL module (build-bundle.mjs) must be requireable from this production tree —
+  //    it's exactly what the shipped agent.cjs resolves at runtime. This catches externals whose
+  //    own runtime requires are UNDECLARED upstream: `@nut-tree-fork/libnut` (meta) required
+  //    `@nut-tree-fork/shared` without listing it, which loaded fine in a dev checkout but broke
+  //    mouse control on every clean `npm i -g whipdesk`. Works despite --ignore-scripts: libnut
+  //    and sharp ship prebuilt binaries, and ffmpeg-static's require only computes a path.
+  //    The libnut addons for OTHER platforms are skipped (their .node can't load here).
+  const loadable = EXTERNAL.filter(
+    (m) => !m.startsWith("@nut-tree-fork/libnut-") || m.endsWith(`-${process.platform}`),
+  );
+  for (const mod of loadable) {
+    const probe = spawnSync(process.execPath, ["-e", "require(process.argv[1])", mod], {
+      cwd: consumer,
+      encoding: "utf8",
+    });
+    if ((probe.status ?? 1) !== 0) {
+      console.error(`\n✖ external module "${mod}" fails to load from the production install tree:\n`);
+      console.error(probe.stderr || probe.stdout || `exit ${probe.status}`);
+      console.error(
+        "A runtime dependency is missing from the shipped tree: declare it in" +
+          "\napps/desktop-agent/package.json or inline the offender (build-bundle.mjs).\n",
+      );
+      process.exit(1);
+    }
+  }
+
   console.log(
-    `\u2713 ${pkg.name}@${pkg.version}: production install tree is clean \u2014 ` +
-      `no deprecation warnings for \`npm install -g ${pkg.name}\`.`,
+    `\u2713 ${pkg.name}@${pkg.version}: production install tree is clean \u2014 no deprecation ` +
+      `warnings for \`npm install -g ${pkg.name}\`, all runtime externals load.`,
   );
 } finally {
   rmSync(work, { recursive: true, force: true });

@@ -51,8 +51,6 @@ export function printConnectInfo(port: number, token: string): void {
   console.log(`  Network: ${netUrl}`);
   console.log("");
   console.log("  Scan the QR with your phone on the same Wi-Fi.");
-  console.log("  Some networks block device-to-device links — if it won't connect, sign in at");
-  console.log("  https://WhipDesk.com and connect from your dashboard (secure relay).");
   console.log("");
   qrcode.generate(netUrl, { small: true });
   console.log("");

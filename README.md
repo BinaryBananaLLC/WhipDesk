@@ -126,6 +126,12 @@ WhipDesk tells you (in the running agent, on your connected phone, and on the da
 version ships — it never auto-updates. See **[docs/UPDATING.md](docs/UPDATING.md)** for the one-line
 update command per install method and how the notifications work.
 
+**Uninstall.** Remove the package the same way you installed it (`npm uninstall -g whipdesk`,
+`brew uninstall --cask whipdesk`, the Windows uninstaller, …). Saved state — pairing token, access
+PIN, cloud sign-in — lives in `~/.whipdesk` and is *not* removed automatically (npm no longer runs
+uninstall scripts). For a clean slate, also run `rm -rf ~/.whipdesk`
+(Windows: `Remove-Item -Recurse ~\.whipdesk`).
+
 ## Setup & permissions (troubleshooting)
 
 The agent prints a short reminder for your OS at startup. If the screen shows only your wallpaper,

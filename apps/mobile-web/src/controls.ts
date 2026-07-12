@@ -286,7 +286,7 @@ export class Controls {
         type: "notification",
         id: `cap-${Date.now()}`,
         title: "View-only",
-        body: "Host mouse/keyboard unavailable — grant Accessibility on the host.",
+        body: "Mouse control isn't available — the host input module failed to load. Run `whipdesk --verbose` on the host for details.",
         level: "warning",
         source: "client",
         t: Date.now(),

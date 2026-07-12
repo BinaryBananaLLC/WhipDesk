@@ -5,8 +5,8 @@
 //     resources/
 //       app.cjs                   <- esbuild bundle of the agent (pure-JS deps inlined)
 //       node_modules/             <- ONLY the native/asset deps, installed for this platform
-//                                    (ffmpeg-static + its ffmpeg binary, sharp, @nut-tree-fork/libnut,
-//                                     werift)
+//                                    (ffmpeg-static + its ffmpeg binary, sharp,
+//                                     @nut-tree-fork/libnut-<os>, werift)
 //
 // The loader boots resources/app.cjs so those deps resolve like a normal install (see
 // scripts/sea-loader.cjs). Signing / notarization / .pkg / archiving are layered on top of

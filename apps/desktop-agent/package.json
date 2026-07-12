@@ -42,7 +42,9 @@
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
-    "@nut-tree-fork/libnut": "^4.2.0",
+    "@nut-tree-fork/libnut-darwin": "2.7.5",
+    "@nut-tree-fork/libnut-linux": "2.7.5",
+    "@nut-tree-fork/libnut-win32": "2.7.5",
     "sharp": "^0.35.3",
     "werift": "^0.23.0"
   },

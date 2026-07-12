@@ -18,15 +18,25 @@ const require = createRequire(import.meta.url);
 // resources/node_modules for the SEA build (see build-sea.mjs).
 //
 // `@nut-tree-fork/nut-js` and `screenshot-desktop` are deliberately NOT here: they're pure JS (nut.js
-// only needs the native @nut-tree-fork/libnut, which IS external; screenshot-desktop just shells to
-// the OS screengrabber), so we INLINE them. That keeps their deprecated transitive deps
+// only needs the native libnut addons, which ARE external; screenshot-desktop just shells to the
+// OS screengrabber), so we INLINE them. That keeps their deprecated transitive deps
 // (jimp→…→phin, temp→rimraf→glob→inflight) out of the user's `npm i -g whipdesk` tree — those
 // packages are no-longer-supported and print install-time warnings, but bundled into agent.cjs they
 // are never installed. See the punycode alias below, which finishes the job for nut.js/jimp.
+//
+// libnut is externalized as the three PLATFORM addon packages, NOT the `@nut-tree-fork/libnut`
+// meta wrapper: the wrapper is pure JS but requires `@nut-tree-fork/shared` (→ jimp) at runtime
+// WITHOUT declaring it (upstream bug) — kept external it loads in a dev checkout (nut-js devDep
+// tree provides shared) but throws on a clean `npm i -g whipdesk`, silently downgrading input to
+// keyboard-only. Declaring shared would reinstall the deprecated jimp tree, so instead the wrapper
+// is inlined (its shared/jimp requires bundle with it) and only the true native addons resolve
+// from node_modules. package.json optionalDependencies must mirror the libnut-* list below.
 export const EXTERNAL = [
   "ffmpeg-static",
   "sharp",
-  "@nut-tree-fork/libnut",
+  "@nut-tree-fork/libnut-darwin",
+  "@nut-tree-fork/libnut-linux",
+  "@nut-tree-fork/libnut-win32",
   "werift",
   "qrcode-terminal",
 ];

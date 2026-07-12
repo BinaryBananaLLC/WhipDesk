@@ -28,12 +28,10 @@ async function resolveCloudOptIn(): Promise<boolean> {
   if (!process.stdin.isTTY) return false;
 
   console.log("");
-  console.log("  Make this machine securely discoverable outside this LAN via WhipDesk.com?");
-  console.log("  - You'll sign in as the SAME real user as on the website (passwordless email link).");
-  console.log("  - The connection is peer-to-peer and encrypted end-to-end. If your network blocks");
-  console.log("    a direct link, a secure relay server passes the traffic through for you — it stays");
-  console.log("    encrypted, so the relay can never see your screen or keystrokes.");
-  const answer = (await ask("  Enable secure cloud access with WhipDesk.com now? [y/N]: ")).trim().toLowerCase();
+  console.log("  To make this machine securely reachable from outside this network, sign in below");
+  console.log("  and at WhipDesk.com with the same email (quick passwordless sign-in). Skip to");
+  console.log("  stay local-only.");
+  const answer = (await ask("  Connect to this machine from outside your local network? [y/N]: ")).trim().toLowerCase();
   return answer === "y" || answer === "yes";
 }
 
