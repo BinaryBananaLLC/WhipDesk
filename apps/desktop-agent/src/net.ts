@@ -90,7 +90,6 @@ export function printSetupReminder(): void {
   console.log("  Setup / permissions:");
   for (const line of lines) console.log(line);
   console.log("");
-  console.log("  Troubleshooting: relaunch with --verbose (e.g. `whipdesk --verbose`) for detailed");
-  console.log("  capture/network logs — attach them when reporting an issue.");
+  console.log("  Troubleshooting: relaunch with --verbose (e.g. `whipdesk --verbose`) for detailed capture/network logs — attach them when reporting an issue.");
   console.log("");
 }

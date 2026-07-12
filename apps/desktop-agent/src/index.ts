@@ -28,9 +28,7 @@ async function resolveCloudOptIn(): Promise<boolean> {
   if (!process.stdin.isTTY) return false;
 
   console.log("");
-  console.log("  To make this machine securely reachable from outside this network, sign in below");
-  console.log("  and at WhipDesk.com with the same email (quick passwordless sign-in). Skip to");
-  console.log("  stay local-only.");
+  console.log("  To make this machine securely reachable from outside this network, sign in below and at WhipDesk.com with the same email (quick passwordless sign-in). Skip to stay local-only.");
   const answer = (await ask("  Connect to this machine from outside your local network? [y/N]: ")).trim().toLowerCase();
   return answer === "y" || answer === "yes";
 }
