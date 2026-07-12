@@ -54,15 +54,18 @@ logical size.
 
 `NotificationHub` fans events to every connected controller (+ a small recent-event buffer).
 Sources: `POST /api/notify` webhook (the AI-completion path) and an opt-in file-pattern
-watcher. Background push to a *closed* PWA is opt-in via FCM (`cloud/push-publisher.ts` →
-`mobile-web/src/push.ts`); the Cloud Function + rules live in the separate web project.
+watcher. Background push to a *closed* PWA is opt-in web push: `cloud/push-publisher.ts` relays
+alerts over the agent's cloud connection, and the backend delivers them as encrypted Web Push to
+the subscriptions registered by `mobile-web/src/push.ts`.
 
 ## Cloud (opt-in, OFF by default)
 
 LAN works with no account. Answering **yes** to the startup prompt enables the device registry
 (machines appear in the web dashboard) and WebRTC signaling. Auth is the REAL user via
-passwordless email-link (NO anonymous auth) — agent and web sign in as the same person, so
-every Firestore access is `request.auth`-gated. The PIN is an app-layer gate on top of DTLS.
+passwordless email-link (NO anonymous auth) — agent and web sign in as the same person, and
+every backend request is authenticated and scoped to that one account. The PIN is an app-layer
+gate on top of DTLS. The client side of the whole cloud contract lives in this repo; see
+[SELF_HOSTING.md](SELF_HOSTING.md) to point the agent at your own backend.
 
 ## Host requirements
 

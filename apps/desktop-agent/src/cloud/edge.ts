@@ -244,6 +244,13 @@ export class EdgeClient {
         this.stopped = true;
         return;
       }
+      if (code === 4001) {
+        // The account (and all of its hub data) was deleted — reconnecting would only recreate
+        // orphaned registry rows with the token's remaining lifetime.
+        log.warn("edge: this account was deleted — standing down.");
+        this.stopped = true;
+        return;
+      }
       log.info(`edge: disconnected (${code}${reason?.length ? ` ${reason}` : ""}) — reconnecting`);
       this.scheduleReconnect();
     });

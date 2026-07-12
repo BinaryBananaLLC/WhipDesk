@@ -44,8 +44,8 @@ screen and keystrokes never flow through anyone else's server.
   for when a session limit resets. Lashes are stored on the host machine (their coordinates are
   tied to its screens) and survive agent updates.
 - **Job-done notifications** — a token-authenticated webhook (`POST /api/notify`) or an opt-in
-  file watcher fires a notification when a slow task completes; optional background push to a
-  closed PWA via FCM.
+  file watcher fires a notification when a slow task completes; optional background web push to a
+  closed PWA.
 - **Private by design** — DTLS-encrypted P2P media, a PIN challenge on **every** connection (the
   PIN itself never crosses the wire), a pairing token underneath, and persistent brute-force
   lockout. Secrets stay on your machine. See [SECURITY.md](SECURITY.md) for the threat model.

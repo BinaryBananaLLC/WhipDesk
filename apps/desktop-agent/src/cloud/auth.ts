@@ -20,9 +20,9 @@ import type { CloudConfig } from "./config";
  *   5. Agent persists the refreshToken in `.whipdesk/auth.json` (gitignored) and refreshes
  *      idTokens via securetoken.googleapis.com as needed.
  *
- * The persisted refresh token means the agent only signs in once. All Firestore access then
- * happens as the real user (request.auth.uid === ownerUid), so the registry + signaling are
- * gated by real identity — exactly what the user asked for.
+ * The persisted refresh token means the agent only signs in once. Every edge request then
+ * happens as the real user (the Worker verifies the ID token and routes to that uid's own hub),
+ * so the registry + signaling are gated by real identity.
  */
 
 const TOKEN_REFRESH_SKEW_MS = 60_000;
@@ -146,7 +146,7 @@ export async function ensureAgentAuth(
     return null;
   }
 
-  const continueUrl = "https://whipdesk.com/en/agent-auth/";
+  const continueUrl = "https://whipdesk.com/agent-auth/";
   try {
     await postJson(`https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`, {
       requestType: "EMAIL_SIGNIN",
@@ -180,13 +180,28 @@ export async function ensureAgentAuth(
       persist(stateDir, record);
       const r = await refreshIdToken(apiKey, record.refreshToken);
       log.info(`cloud: signed in as ${email} ✓`);
-      return makeAuth(apiKey, stateDir, record, r.idToken, r.expiresInMs);
+      const auth = makeAuth(apiKey, stateDir, record, r.idToken, r.expiresInMs);
+      // Best-effort: record this sign-in on the backend so the account profile exists even for
+      // agent-only (headless-first) accounts. Never blocks or fails the sign-in.
+      recordSignInOnEdge(config, auth);
+      return auth;
     } catch (error) {
       console.log(`  Sign-in failed: ${(error as Error).message}. Try the newest email link.`);
     }
   }
   log.warn("cloud: sign-in not completed — staying LAN-only.");
   return null;
+}
+
+/** Fire-and-forget POST /v1/signin — the edge records email (from the verified token) + hashed IP. */
+function recordSignInOnEdge(config: CloudConfig, auth: AgentAuth): void {
+  const base = (config.edgeUrl ?? "https://edge.whipdesk.com").replace(/\/$/, "");
+  void auth
+    .getIdToken()
+    .then((t) => fetch(`${base}/v1/signin`, { method: "POST", headers: { authorization: `Bearer ${t}` } }))
+    .catch(() => {
+      /* best-effort */
+    });
 }
 
 function makeAuth(

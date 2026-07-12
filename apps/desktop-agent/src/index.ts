@@ -3,7 +3,6 @@ import { platform } from "node:os";
 import { AGENT_VERSION } from "./config";
 import { loadCloudConfig, loadDeviceIdentity } from "./cloud/config";
 import { clearPersistedAuth, ensureAgentAuth, getPersistedAuthSummary } from "./cloud/auth";
-import { createFirestoreRest } from "./cloud/firestore-rest";
 import { EdgeClient } from "./cloud/edge";
 import { startDeviceRegistry, type RegistryHandle } from "./cloud/registry";
 import { startPushPublisher, type PushPublisherHandle } from "./cloud/push-publisher";
@@ -41,11 +40,11 @@ async function main(): Promise<void> {
 
   // Cloud is OPT-IN (LAN-only needs no account). The hosted WhipDesk.com backend is baked in
   // (cloud/config.ts), so enabling it just needs a yes at the startup prompt. Cloud powers the
-  // dashboard registry AND remote WebRTC signaling (the data path stays P2P; Firebase only
+  // dashboard registry AND remote WebRTC signaling (the data path stays P2P; the edge only
   // brokers the handshake).
   //
   // Auth is the REAL user via passwordless email-link (NO anonymous auth): the agent and the
-  // website sign in as the same person, so every Firestore read/write is request.auth-gated.
+  // website sign in as the same person, so every edge request is verified-token-gated.
   let edge: EdgeClient | null = null;
   let registry: RegistryHandle | null = null;
   let signaling: SignalingHandle | null = null;
@@ -65,9 +64,9 @@ async function main(): Promise<void> {
     }
     const auth = await ensureAgentAuth(cloud, config.stateDir, ask);
     if (auth) {
-      // Presence + signaling ride ONE WebSocket to the WhipDesk edge (Cloudflare) — online is
-      // simply "this socket is up", offers arrive as messages. The FCM push relay stays on
-      // Firestore (rare event-driven writes that trigger the Cloud Function).
+      // Presence + signaling + the alert relay ride ONE WebSocket to the WhipDesk edge
+      // (Cloudflare) — online is simply "this socket is up", offers arrive as messages, and
+      // alerts go out as `notify` frames the hub fans out as web push.
       const getLan = () => ({ ip: getLanIp(), port: config.port, token: config.token });
       edge = new EdgeClient({
         url: cloud.edgeUrl ?? "https://edge.whipdesk.com",
@@ -90,10 +89,9 @@ async function main(): Promise<void> {
       signaling = startSignaling(ctx, edge, () => fetchIceServers(cloud, auth, edge ?? undefined));
       registry = startDeviceRegistry({ edge, getLan });
       edge.start();
-      // Mirror alerts to FCM so they arrive even when the controller PWA is closed. Pass this
-      // machine's id so the push can deep-link the click back to it on the dashboard.
-      const firestore = createFirestoreRest(cloud, auth);
-      pushPublisher = startPushPublisher(ctx.hub, firestore, identity.deviceId);
+      // Mirror alerts over the hub socket so they arrive as web push even when the controller
+      // PWA is closed. Pass this machine's id so the push can deep-link the click back to it.
+      pushPublisher = startPushPublisher(ctx.hub, edge, identity.deviceId);
     }
   } else {
     log.info("cloud: disabled (LAN-only) for this run.");

@@ -1,5 +1,6 @@
 import type { ClientMessage } from "@whipdesk/protocol";
 import { ControllerCore, type ControllerEvents } from "./core";
+import { cacheToken, edgePostKeepalive } from "./cloudApi";
 import { signInUrl } from "./site";
 
 export interface FirebaseWebConfig {
@@ -9,7 +10,7 @@ export interface FirebaseWebConfig {
   appId: string;
   storageBucket?: string;
   messagingSenderId?: string;
-  /** Web Push (VAPID) public key — enables FCM background push when set (Firebase console). */
+  /** Web Push (VAPID) public key — enables background push when set. */
   vapidKey?: string;
   /** WhipDesk edge (Cloudflare Worker) — WebRTC signaling + ICE minting. */
   edgeUrl?: string;
@@ -31,17 +32,6 @@ const HTTP_SIGNAL_TTL_MS = 2 * 60_000; // matches the hub's pending-session TTL
 // Public STUN fallback (Google's free servers). The backend normally supplies the full STUN+TURN
 // list via fetchIceServers; this is used only if that fetch fails.
 const STUN = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
-
-/**
- * Month bucket id for the per-month stats doc — "YYYY-MM" in UTC. Built the SAME way as the reader
- * (WWW src/lib/devices.ts `monthId`): normalize to the 1st of the UTC month, then take the ISO
- * year-month. Going through Date.UTC (rather than a hand-rolled `getUTCMonth()+1`) means no
- * off-by-one and no year-rollover bugs, and UTC (not local time) guarantees a device and its
- * dashboard address the identical doc regardless of timezone. Keep this in lockstep with the reader.
- */
-export function monthKeyUTC(d = new Date()): string {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0, 7);
-}
 
 /** Read the selected ICE route from getStats: TURN (relay), STUN (srflx), or LAN (host). */
 async function detectTransport(pc: RTCPeerConnection): Promise<"TURN" | "STUN" | "LAN" | null> {
@@ -95,10 +85,10 @@ export class RemoteConnection {
   private reconnectTimer = 0;
   // getStats-driven link quality (fps + rtt) for the connection dialog.
   private statsTimer = 0;
-  // Time-on-WhipDesk accounting: connected seconds banked into users/{uid}.stats.secs ONCE per
+  // Time-on-WhipDesk accounting: connected seconds banked to the edge (POST /v1/stats) ONCE per
   // session (teardown/disconnect/pagehide) — the Stats page turns the total into "You enjoyed
-  // WhipDesk for X hrs". Never flush this on a timer: a per-minute flush is one Firestore write
-  // per user per minute, which at scale is millions of writes a day for a vanity counter.
+  // WhipDesk for X hrs". Never flush this on a timer: a per-minute flush is one row write per
+  // user per minute, which at scale is millions of writes a day for a vanity counter.
   private flushConnectedTime: (() => void) | null = null;
 
   constructor(
@@ -251,7 +241,8 @@ export class RemoteConnection {
       window.location.assign(signInUrl(`/app/${window.location.hash}`));
       return;
     }
-    const uid = auth.currentUser.uid;
+
+    const edgeUrl = (this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "");
 
     // ONE attempt with the full STUN+TURN list. ICE prefers host > srflx > relay, so a same-LAN or
     // STUN pair wins on its own and TURN is used only as a genuine last resort — no probe, no
@@ -286,40 +277,35 @@ export class RemoteConnection {
       if (!kind) return;
       transportReported = true;
       this.core.emit("transport", kind);
-      // One write per connection. Stats are PERSISTENT user data -> Firestore. We bump TWO counters:
-      // the all-time map on the user doc, and a per-month doc (users/{uid}/statsMonthly/{YYYY-MM})
-      // so the dashboard can show "all time" vs "this/last month" without scanning history. The month
-      // id comes from monthKeyUTC() — the exact construction the reader uses (WWW lib/devices.ts).
+      // One write per connection. The edge hub bumps TWO counters from this single event — the
+      // all-time map AND the current UTC month bucket (the month key is computed server-side, so
+      // reader and writer can never disagree on which month a connection lands in).
       const key = kind === "TURN" ? "turn" : kind === "STUN" ? "stun" : "lan";
-      const ym = monthKeyUTC();
       try {
-        const { getFirestore, doc, setDoc, increment } = await import("firebase/firestore");
-        const fs = getFirestore(app);
-        void setDoc(doc(fs, "users", uid), { stats: { [key]: increment(1) } }, { merge: true }).catch(() => {});
-        void setDoc(doc(fs, "users", uid, "statsMonthly", ym), { [key]: increment(1) }, { merge: true }).catch(
-          () => {},
-        );
+        const t = await auth.currentUser!.getIdToken();
+        cacheToken(t);
+        void fetch(`${edgeUrl}/v1/stats`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${t}`, "content-type": "application/json" },
+          body: JSON.stringify({ v: 1, transport: key }),
+        }).catch(() => {});
       } catch {
         /* stats are best-effort */
       }
     };
 
-    // Time-on-WhipDesk: bank connected seconds into users/{uid}.stats.secs, ONE write per session
-    // end (teardown/disconnect/pagehide). A hard-killed tab loses that session's time — accepted:
-    // this is a feel-good counter, not billing, and periodic flushing costs real Firestore money.
-    // All-time only — the statsMonthly rules allow just the lan/stun/turn counters.
+    // Time-on-WhipDesk: bank connected seconds to the edge, ONE write per session end
+    // (teardown/disconnect/pagehide). Built fully synchronously from the cached ID token —
+    // an async token mint never completes inside pagehide — and sent with keepalive so the
+    // request survives the page going away. A hard-killed tab loses that session's time —
+    // accepted: this is a feel-good counter, not billing, and periodic flushing costs real money.
     let connectedSince = 0;
     const flushTime = () => {
       if (!connectedSince) return;
       const secs = Math.round((Date.now() - connectedSince) / 1000);
       connectedSince = 0;
       if (secs < 1) return;
-      void (async () => {
-        const { getFirestore, doc, setDoc, increment } = await import("firebase/firestore");
-        await setDoc(doc(getFirestore(app), "users", uid), { stats: { secs: increment(secs) } }, { merge: true });
-      })().catch(() => {
-        /* best-effort */
-      });
+      edgePostKeepalive(this.config, "/v1/stats", { v: 1, secs });
     };
     this.flushConnectedTime = flushTime;
 
@@ -392,12 +378,12 @@ export class RemoteConnection {
       return false;
     };
 
-    const edgeUrl = (this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "");
     const signalUrl = `${edgeUrl}/v1/signal`;
 
     // ---- HTTP fallback channel ----
     const postSignal = async (msg: Record<string, unknown>): Promise<Response> => {
       const t = await auth.currentUser!.getIdToken();
+      cacheToken(t);
       return fetch(signalUrl, {
         method: "POST",
         headers: { authorization: `Bearer ${t}`, "content-type": "application/json" },
@@ -508,6 +494,7 @@ export class RemoteConnection {
     // ---- WS channel (the normal path) ----
     const wsUrl = `${edgeUrl.replace(/^http/, "ws")}/v1/connect?role=client`;
     const token = await auth.currentUser.getIdToken();
+    cacheToken(token);
     // Browsers can't set WS headers — the ID token rides the subprotocol list.
     const ws = new WebSocket(wsUrl, [EDGE_WS_PROTOCOL, `auth.${token}`]);
     this.signalWs = ws;
@@ -534,7 +521,7 @@ export class RemoteConnection {
       }
     };
     // Kept open for the life of the P2P session: a dying tab closes it, which tells the hub (and
-    // the agent) to drop the signaling state — the replacement for RTDB's onDisconnect cleanup.
+    // the agent) to drop the signaling state — no orphaned handshakes to sweep up later.
     ws.onopen = () => {
       if (this.closed || this.signalWs !== ws) return;
       window.clearTimeout(wsDeadline);
@@ -652,6 +639,7 @@ export class RemoteConnection {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const token = await user.getIdToken();
+        cacheToken(token);
         const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
         if (res.ok) {
           const body = (await res.json()) as { iceServers?: RTCIceServer[] };

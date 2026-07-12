@@ -1,3 +1,4 @@
+import { edgeFetch } from "./cloudApi";
 import type { FirebaseWebConfig } from "./remote";
 import type { Notifications } from "./notifications";
 import { icon } from "./icons";
@@ -11,11 +12,11 @@ import whipositoryMark from "./assets/whipository.png";
  *
  * Storage model (deliberately cheap):
  *   - localStorage is ALWAYS the working copy — instant open, works fully offline / on LAN.
- *   - Signed-in cloud sessions sync it to ONE Firestore doc (`users/{uid}/whipository/whips`):
- *     at most ONE read per page session (lazy, on first open) and debounced whole-list writes.
- *     One doc means no per-item read fan-out, and the rules cap list length so nobody can park
- *     megabytes on our bill. Newest `updatedAt` wins between local and cloud (no per-item merge —
- *     predictable beats clever for a personal prompt list).
+ *   - Signed-in cloud sessions sync it to ONE whole-list doc on the WhipDesk edge (GET/POST
+ *     /v1/whips): at most ONE read per page session (lazy, on first open) and debounced
+ *     whole-list writes. One doc means no per-item fan-out, and the server caps list length so
+ *     nobody can park megabytes server-side. Newest `updatedAt` wins between local and cloud
+ *     (no per-item merge — predictable beats clever for a personal prompt list).
  */
 
 export interface Whip {
@@ -35,7 +36,7 @@ interface WhipStoreShape {
   updatedAt: number;
 }
 
-/** Caps mirrored in firestore.rules — keep both in sync. */
+/** Caps enforced server-side too — keep both ends in sync. */
 export const MAX_WHIPS = 50;
 export const MAX_WHIP_CHARS = 2000;
 
@@ -64,7 +65,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 
 export class Whipository {
   private store: WhipStoreShape;
-  private cloudLoaded = false; // one Firestore read per page session, on first open
+  private cloudLoaded = false; // one cloud read per page session, on first open
   private cloudTimer = 0;
   private overlay: HTMLElement | null = null;
 
@@ -351,12 +352,12 @@ export class Whipository {
     if (!this.cloud || this.cloudLoaded) return;
     this.cloudLoaded = true;
     try {
-      const { doc, getDoc } = await import("firebase/firestore");
-      const ctx = await this.cloudCtx();
-      if (!ctx) return;
-      const snap = await getDoc(doc(ctx.db, "users", ctx.uid, "whipository", "whips"));
-      const data = snap.exists() ? (snap.data() as { whips?: Whip[]; updatedAt?: number }) : null;
-      if (data && Array.isArray(data.whips)) {
+      const user = await this.cloudUser();
+      if (!user) return;
+      const data = await edgeFetch<{ whips?: Whip[]; updatedAt?: number }>(this.cloud, user, "/v1/whips");
+      // updatedAt 0 = no server doc yet. An EXISTING doc with an empty list is real data (the user
+      // deleted everything on another device) and must win like any other newer copy.
+      if (data && Array.isArray(data.whips) && (data.updatedAt || 0) > 0) {
         if ((data.updatedAt || 0) > this.store.updatedAt) {
           this.store = {
             v: 1,
@@ -378,7 +379,7 @@ export class Whipository {
         this.scheduleCloudSave(CLOUD_WRITE_DEBOUNCE_MS); // local-only list from before sign-in
       }
     } catch {
-      /* offline / rules hiccup — local copy remains the truth for this session */
+      /* offline / edge hiccup — local copy remains the truth for this session */
     }
   }
 
@@ -393,30 +394,44 @@ export class Whipository {
   }
 
   private async pushToCloud(): Promise<void> {
+    if (!this.cloud) return;
     try {
-      const { doc, setDoc } = await import("firebase/firestore");
-      const ctx = await this.cloudCtx();
-      if (!ctx) return;
-      await setDoc(doc(ctx.db, "users", ctx.uid, "whipository", "whips"), {
-        whips: this.store.whips.slice(0, MAX_WHIPS).map((w) => ({
-          id: w.id,
-          text: w.text.slice(0, MAX_WHIP_CHARS),
-          uses: w.uses,
-          t: w.t,
-        })),
-        updatedAt: this.store.updatedAt || Date.now(),
+      const user = await this.cloudUser();
+      if (!user) return;
+      const reply = await edgeFetch<{ ok: boolean; whips?: Whip[]; updatedAt?: number }>(this.cloud, user, "/v1/whips", {
+        body: {
+          v: 1,
+          whips: this.store.whips.slice(0, MAX_WHIPS).map((w) => ({
+            id: w.id,
+            text: w.text.slice(0, MAX_WHIP_CHARS),
+            uses: w.uses,
+            t: w.t,
+          })),
+          updatedAt: this.store.updatedAt || Date.now(),
+        },
       });
+      // Server had a fresher copy (another device wrote since our lazy read) — adopt it, same as
+      // the read path: newest updatedAt wins, no per-item merge.
+      if (reply && reply.ok === false && Array.isArray(reply.whips)) {
+        this.store = {
+          v: 1,
+          whips: reply.whips.slice(0, MAX_WHIPS),
+          seeded: true,
+          updatedAt: reply.updatedAt || Date.now(),
+        };
+        this.saveLocal();
+        this.onCloudRefresh?.();
+      }
     } catch {
       /* best-effort — retried on the next change or next session's lazy sync */
     }
   }
 
-  /** Shared Firebase app/auth the remote transport already set up; null when not signed in. */
-  private async cloudCtx(): Promise<{ db: import("firebase/firestore").Firestore; uid: string } | null> {
+  /** Shared Firebase auth session the remote transport already set up; null when not signed in. */
+  private async cloudUser(): Promise<{ getIdToken(): Promise<string> } | null> {
     if (!this.cloud) return null;
     const { initializeApp, getApps } = await import("firebase/app");
     const { getAuth } = await import("firebase/auth");
-    const { getFirestore } = await import("firebase/firestore");
     const app = getApps()[0] ?? initializeApp(this.cloud);
     const auth = getAuth(app);
     if (!auth.currentUser) {
@@ -427,8 +442,6 @@ export class Whipository {
         });
       });
     }
-    const user = auth.currentUser;
-    if (!user) return null;
-    return { db: getFirestore(app), uid: user.uid };
+    return auth.currentUser;
   }
 }

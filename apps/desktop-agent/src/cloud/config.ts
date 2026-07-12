@@ -32,14 +32,11 @@ export interface CloudConfig {
  *
  * Publishing them is safe because access is gated three independent ways:
  *   1. Cloud is OPT-IN — the agent stays LAN-only unless you answer "yes" at startup.
- *      Answer "No" and nothing ever touches Firebase.
- *   2. Every read/write is auth.uid-scoped by the Firestore + RTDB rules: a signed-in user can
- *      only ever touch their OWN subtree, after a real passwordless email-link sign-in.
- *   3. There is NO service-account key here — this is browser-grade config, so it can't grant
- *      admin access or bypass the rules.
- *
- * `storageBucket` is intentionally omitted: the agent only uses Auth + Firestore + RTDB, and
- * Cloud Storage isn't wired up at all (Firestore does NOT depend on it).
+ *      Answer "No" and nothing ever leaves the machine.
+ *   2. Every edge request is uid-scoped: the Worker verifies the ID token and only ever routes
+ *      the caller to their OWN per-user hub, after a real passwordless email-link sign-in.
+ *   3. There is NO service-account key or edge secret here — this is browser-grade config, so
+ *      it can't grant admin access or bypass the checks.
  */
 export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   apiKey: "AIzaSyCKwUELKrNUY3cfRTKL3rKkoGS_l3VCRJg",

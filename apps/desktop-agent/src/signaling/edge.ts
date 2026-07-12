@@ -8,7 +8,7 @@ import type { AgentContext } from "../server";
  * Edge WebRTC signaling: controller offers arrive as `offer` messages on the agent's hub socket
  * (see cloud/edge.ts), we answer, and ICE candidates trickle both ways as `cand` messages. The
  * hub relays with ordered, exactly-once delivery, so there is no candidate de-dupe and no
- * re-delivered-session bookkeeping (both were RTDB artifacts). The media path stays P2P DTLS;
+ * re-delivered-session bookkeeping. The media path stays P2P DTLS;
  * control still requires the token + PIN like every other transport.
  */
 

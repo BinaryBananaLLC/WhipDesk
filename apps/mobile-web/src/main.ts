@@ -92,12 +92,12 @@ async function start(): Promise<void> {
   const input = new InputController(canvas, view, conn);
   // Notification permission is requested on a clear gesture (creating the first alert/timer), not
   // abruptly on load — Android Chrome ignores non-gesture requests, which is why the site never
-  // appeared in the browser's notification settings. In remote mode this also wires FCM for
+  // appeared in the browser's notification settings. In remote mode this also wires web push for
   // background delivery when the PWA is closed.
   const requestNotifications = () =>
     remoteConfig ? registerPush(remoteConfig, notifications) : notifications.requestPermission();
   // Whipository: reusable saved prompts. Cloud sessions sync to the user's account (one lazy
-  // Firestore read/session + debounced writes); LAN keeps them in this browser only.
+  // read per session + debounced writes); LAN keeps them in this browser only.
   const whipository = new Whipository(app!, notifications, remoteConfig);
   // LashStash: reusable multi-step automations ("lashes"), stored on the HOST — screen coords are
   // device-specific, so they live in the agent's state dir, not in the cloud.
@@ -409,9 +409,9 @@ async function start(): Promise<void> {
   conn.on("notification", (n) => notifications.show(n));
   conn.on("error", (message) => controls.flashError(message));
 
-  // Returning users who already granted notifications: refresh their FCM token so background push
-  // keeps working. First-time permission is requested later, from a real gesture (creating an
-  // alert/timer) — see requestNotifications.
+  // Returning users who already granted notifications: refresh their push subscription so
+  // background push keeps working. First-time permission is requested later, from a real gesture
+  // (creating an alert/timer) — see requestNotifications.
   if (remoteConfig) {
     let pushReady = false;
     conn.on("welcome", () => {

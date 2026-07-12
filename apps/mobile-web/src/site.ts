@@ -31,15 +31,21 @@ function siteBase(): string {
   return location.hostname.endsWith("whipdesk.com") ? "" : "https://whipdesk.com";
 }
 
-/** Locale-aware dashboard URL, e.g. `/en/dashboard/`. */
+/** English pages live un-prefixed (`/dashboard/`); other locales get a `/xx/` prefix. */
+function localePrefix(): string {
+  const locale = siteLocale();
+  return locale === DEFAULT_LOCALE ? "" : `/${locale}`;
+}
+
+/** Locale-aware dashboard URL, e.g. `/dashboard/`. */
 export function dashboardUrl(): string {
-  return `${siteBase()}/${siteLocale()}/dashboard/`;
+  return `${siteBase()}${localePrefix()}/dashboard/`;
 }
 
 /** Locale-aware sign-in URL with an optional post-login `next` path. */
 export function signInUrl(next?: string): string {
   const q = next ? `?next=${encodeURIComponent(next)}` : "";
-  return `${siteBase()}/${siteLocale()}/sign-in/${q}`;
+  return `${siteBase()}${localePrefix()}/sign-in/${q}`;
 }
 
 /**
