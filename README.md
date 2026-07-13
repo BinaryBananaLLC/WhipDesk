@@ -1,6 +1,8 @@
-# WhipDesk
+<div align="center">
 
-> Control your desktop — and the AI coding agents running on it — from any phone browser.
+# WhipDesk — Control AI Coding Agents from Anywhere
+
+<!-- ###  -->
 
 [![CI](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/BinaryBananaLLC/WhipDesk)](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest)
@@ -10,269 +12,199 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 
-WhipDesk turns any mobile browser into a remote control for your dev machine. See the screen,
-move the mouse, type, paste prompts into your AI tools, and get a push notification the moment a
-long-running build or agent job finishes — no app store install, no kernel extension, no agent
-running on your phone.
 
-Because it's **screen-level**, it works with *every* AI agent — Claude Code and Codex in a
-terminal, Copilot Chat inside VS Code, Cursor, a browser tab running tests — with **no wrappers
-and no hooks required**: you never change how you launch your tools. CLI-wrapper apps only see
-the one agent they wrap; WhipDesk sees your actual desktop.
 
-It's peer-to-peer: an encrypted WebRTC connection that talks **directly** between phone and
-desktop, on your LAN or across the internet. The cloud only brokers the initial handshake — your
-screen and keystrokes never flow through anyone else's server.
 
-## Features
 
-- **Live screen, tuned for mobile data** — direct H.264, hardware-encoded. When you zoom, the
-  host **re-crops the encode to just your phone's viewport**, so a magnified terminal costs a
-  fraction of the bandwidth of streaming the whole desktop — full-desktop streamers (RustDesk,
-  Parsec, Chrome Remote Desktop) always ship every pixel. A quality ladder steps the bitrate
-  down automatically on a lossy cellular link, and encoding pauses entirely while your phone's
-  screen is off.
-- **AI-agent monitoring (auto-whips)** — the host detects running agents (Claude Code, Codex,
-  Gemini CLI, Aider, Copilot — including Copilot Chat inside VS Code — opencode, Cursor, Amp) by
-  observing processes and transcripts, and pings your phone the moment one stops working: waiting
-  on you, finished, or crashed. Zero config; optional [agent-native hooks](docs/HOOKS.md) make the
-  alert instant.
-- **Full input** — mouse, touch, and keyboard injected into the real OS; built for poking at
-  AI agents and CLIs from your couch.
-- **LashStash** — record reusable multi-step automations ("lashes": click → type a prompt →
-  Enter, waits, key presses…), then run one instantly with a 3-second countdown or schedule it
-  for when a session limit resets. Lashes are stored on the host machine (their coordinates are
-  tied to its screens) and survive agent updates.
-- **Job-done notifications** — a token-authenticated webhook (`POST /api/notify`) or an opt-in
-  file watcher fires a notification when a slow task completes; optional background web push to a
-  closed PWA.
-- **Private by design** — DTLS-encrypted P2P media, a PIN challenge on **every** connection (the
-  PIN itself never crosses the wire), a pairing token underneath, and persistent brute-force
-  lockout. Secrets stay on your machine. See [SECURITY.md](SECURITY.md) for the threat model.
-- **No account needed on LAN** — cloud (remote access, device dashboard) is strictly opt-in.
 
-## Quick start (macOS)
+<img src="https://whipdesk.com/art-optimized/site_poster.webp" alt="WhipDesk — your AI coding agents, controlled from your phone" width="720" />
 
-```bash
-npm install
-npm run dev          # builds the web controller, then starts the desktop agent
-```
 
-The agent prints a `http://<lan-ip>:8787/#t=<token>` URL and a QR code. Open it on your phone
-(same Wi-Fi), then grant the launching terminal app **Screen Recording** and **Accessibility**
-in System Settings → Privacy & Security, and restart it. Without those, frames show only the
-wallpaper and input does nothing.
 
-Fire a test notification:
+
+
+[WhipDesk.com](https://whipdesk.com) · [Install](#install) · [Features](#features) · [How it works](#how-it-works) · [FAQ](https://whipdesk.com/faq/)
+</div>
+
+<div align="center">
+
+</div>
+
+WhipDesk is a __mobile-first remote access tool__ designed specifically for developers who need to oversee and manage AI coding agents running on their dev machines, __directly from their phones__. 
+
+A secure, open-source remote access tool for vibecoders on the go.
+
+## Why WhipDesk?
+Modern AI workflows require more than traditional tools can offer:
+
+- __Beyond the Terminal:__ Terminal-only apps limit what your agents can do. WhipDesk gives you full access to your entire desktop and development environment so you never hit a wall.
+
+- __Built for Mobile & AI:__ Traditional remote desktop tools are notoriously clunky on small screens and weren't built with AI agents in mind. WhipDesk is tailored for mobile-first control, letting you effortlessly monitor, guide, and course-correct your vibecoding sessions.
+
+
+__Free, open-source, end-to-end encrypted.__ Works on your local network with no account — or from anywhere with a free sign-in at [WhipDesk.com](https://whipdesk.com).
+
+
+
+## Demo
+
+<!-- TODO(demo video): terminal `npm install -g whipdesk` → `whipdesk` (LAN, skip cloud) → phone scans the QR →
+     zoom into VS Code, browse files, view a diff, type a new prompt to the AI →
+     "To connect beyond your local network, sign in on WhipDesk.com and in your agent" → connecting from the park. -->
+
+TODO
+
+## Quick Start
+
+### On developemnt machine 
+Install agent on dev machine by using on of the options:
+#### 🍎 macOS
 
 ```bash
-npm run notify -- "Build done" "tsc finished with 0 errors"
-```
+# npm
+npm install -g whipdesk
 
-> Tested on macOS (Apple Silicon). The capture/input stack is cross-platform, but Windows and
-> Linux hosts aren't verified yet.
+# Homebrew
+brew install --cask BinaryBananaLLC/whipdesk/whipdesk
 
-## Install a prebuilt agent
-
-You don't have to build from source. Every [release](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest)
-is built by GitHub Actions straight from the tagged source, with
-[verifiable build provenance](docs/VERIFYING-DOWNLOADS.md).
-
-**One-liners** ([install.sh](scripts/install/install.sh) / [install.ps1](scripts/install/install.ps1) —
-they download the signed release for your OS, verify its SHA-256, and install it):
-
-macOS / Linux:
-
-```bash
+# Quick install
 curl -fsSL https://whipdesk.com/install.sh | bash
 ```
 
-Windows (PowerShell):
+#### 🪟 Windows
 
 ```powershell
-powershell -c "irm https://whipdesk.com/install.ps1 | iex"
-```
-
-**Homebrew (macOS).**
-
-```bash
-brew install --cask BinaryBananaLLC/whipdesk/whipdesk
-whipdesk
-```
-
-**Self-contained download (no Node needed).** Grab the package for your OS:
-
-| OS | Asset | Notes |
-| --- | --- | --- |
-| macOS | `whipdesk-<ver>-macos-arm64.pkg` / `-x64.pkg` | Signed with a Developer ID & **notarized** — installs `whipdesk` to your PATH. |
-| Windows | `whipdesk-<ver>-windows-x64-setup.exe` | Setup wizard — installs per-user, no admin needed. |
-| Windows | `whipdesk-<ver>-windows-x64.zip` | Portable: unzip and run `whipdesk.exe` (also available via Scoop). |
-| Linux | `whipdesk-<ver>-linux-x64.tar.gz` | Extract and run `./whipdesk` (needs X11). |
-
-**npm (if you already have Node ≥ 20):**
-
-```bash
+# npm
 npm install -g whipdesk
+
+# Quick install
+powershell -c "irm https://whipdesk.com/install.ps1 | iex"
+
+# Scoop
+scoop install whipdesk
+```
+
+#### 🐧 Linux
+
+```bash
+# npm
+npm install -g whipdesk
+
+# Quick install
+curl -fsSL https://whipdesk.com/install.sh | bash
+```
+
+__and start it by calling__
+
+```bash
 whipdesk
 ```
 
-The npm package is published with [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
-(the verified badge on npmjs.com links back to the exact build).
+You will be asked to set an access PIN to unlock dev machine. Depndingon on your OS, you might need to also __grant permissions__ to allow whipdesk to control your device remoetly:
 
-Prebuilt agents keep their pairing/PIN state in `~/.whipdesk`, so updates don't re-pair you.
-**Always verify a download before running it** — see [docs/VERIFYING-DOWNLOADS.md](docs/VERIFYING-DOWNLOADS.md).
+- **macOS** — grant **Screen Recording** and **Accessibility** (System Settings → Privacy & Security) to the app that *launched* the agent — Terminal, iTerm, or VS Code — then fully quit and reopen that app.
+- **Windows** — works out of the box. To see and control elevated windows (UAC prompts, apps run as administrator), launch your terminal as administrator.
+- **Linux** — X11 works out of the box. Wayland needs your desktop's screen-share portal (`xdg-desktop-portal` plus your compositor's backend).
 
-WhipDesk tells you (in the running agent, on your connected phone, and on the dashboard) when a new
-version ships — it never auto-updates. See **[docs/UPDATING.md](docs/UPDATING.md)** for the one-line
-update command per install method and how the notifications work.
+### On your phone (connected to the same Wifi)
 
-**Uninstall.** Remove the package the same way you installed it (`npm uninstall -g whipdesk`,
-`brew uninstall --cask whipdesk`, the Windows uninstaller, …). Saved state — pairing token, access
-PIN, cloud sign-in — lives in `~/.whipdesk` and is *not* removed automatically (npm no longer runs
-uninstall scripts). For a clean slate, also run `rm -rf ~/.whipdesk`
-(Windows: `Remove-Item -Recurse ~\.whipdesk`).
+Scan QR code from the console to intiaite connection, enter PIN and you are ready yo Whip lazy AI!
 
-## Setup & permissions (troubleshooting)
+### On your phone (not connected to the same Wifi/LAN)
+**To connect from outside your local network**, sign in with the same email address (no password needed) on [WhipDesk.com](https://whipdesk.com) and on your dev machine during setup — your machine will appear in your [dashboard](https://whipdesk.com/dashboard/), ready to connect from anywhere.
 
-The agent prints a short reminder for your OS at startup. If the screen shows only your wallpaper,
-or the mouse/keyboard don't respond, it's almost always an OS permission — here's the fix per
-platform:
+<div align="center">
+<img src="https://whipdesk.com/art-optimized/readme1.webp" alt="WhipDesk — control AI coding agents from anywhere" width="720" />
+</div>
 
-**macOS** — grant the app that *launched* the agent (Terminal, iTerm, or VS Code), not "node":
+## How it works?
 
-1. **Screen Recording** — System Settings → Privacy & Security → Screen Recording → enable the app.
-   Without it, frames show only the wallpaper.
-2. **Accessibility** — System Settings → Privacy & Security → Accessibility → enable the app.
-   Without it, mouse and keyboard input do nothing.
-3. **Fully quit and reopen** that app (a plain window-close isn't enough), then run it again.
+The WhipDesk agent runs on your dev machine simialry to a typical remote access app. It captures and shares the screen with real mouse and keyboard control, and serves the web client your phone loads.
 
-   Shortcut to the right pane: `open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"`
+### On your local network
 
-**Windows** — capture and input work out of the box. If the screen is black or clicks are ignored
-on an elevated window (a UAC prompt or an app "Run as administrator"), relaunch your terminal via
-**Run as administrator** so the agent can see and drive those windows.
+Your phone and the agent connect directly over WebRTC — DTLS-encrypted, phone-to-desktop with nothing in between. No account, no servers, nothing ever leaves your network. The entire logic behind this is in this repo.
 
-**Linux** — X11 sessions work out of the box. On **Wayland**, screen capture is gated behind the
-desktop's screen-share portal: install/enable `xdg-desktop-portal` (plus your compositor's backend,
-e.g. `xdg-desktop-portal-wlr` or `-gnome`), or log in under an **X11/Xorg** session instead of
-Wayland. Input injection also needs access to `/dev/uinput` on some setups.
+### Outside your local network
 
-If capture is genuinely blocked, the agent also logs step-by-step help and pushes a
-"Screen capture blocked" alert to your phone.
+To conenct devices outside of yoru local network, they need a way to find each other — that's where WhipDesk.com comes in. 
 
-### Verbose logs (for bug reports)
+Sign in with the same email account on [WhipDesk.com](https://whipdesk.com) and in the agent during setup, and your dev machine shows up in your dashboard, ready to connect from the office, the park, or the beach. WhipDesk.com only introduces your devices to each other; the session itself always stays end-to-end encrypted between them — most connections flow directly peer-to-peer, and the rest go through a relay that only forwards sealed packets it can't read.
 
-When something misbehaves — a black or frozen screen, a capture that keeps restarting, a
-connection that won't form — re-run the agent with `--verbose` and share the output when you open
-an issue. It surfaces the capture/encoder/ffmpeg and transport chatter that's hidden in normal use.
+Either way, every connection has to answer your PIN before the screen starts — and the PIN itself never crosses the wire. Design details live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the threat model in [SECURITY.md](SECURITY.md). 
 
-- **Prebuilt binary** (Scoop / direct download): `whipdesk --verbose`
-- **From source**: `npm run whipdesk:verbose` (or `npm run dev` to rebuild the controller first)
 
-Copy the console output from startup through the moment the problem happens into your
-[GitHub issue](https://github.com/BinaryBananaLLC/WhipDesk/issues). The only secret shown is the
-pairing token in the connect URL — redact the `#t=…` fragment before sharing.
+## What makes WhipDesk unique?
 
-### Windows screen capture & HDR
+- **Actually usable on a phone** — built mobile-first, not desktop-first squeezed onto a phone. Landscape mode, full-screen viewing, and touch-native controls make reading code on a 4K dev box natural.
+- **Smart zoom, crystal-clear text** — WhipDesk streams only the part of the screen you're looking at, so zoomed-in code stays razor sharp even on weak cellular. Pan, and the picture blurs for a blink while the stream catches up — the trade that makes it work on low bandwidth.
+- **Auto-Whips** — get pinged the moment an agent is waiting on you, finished, or crashed. Detects Claude Code, Codex, Gemini CLI, Aider, GitHub Copilot CLI, opencode, Cursor Agent, and Amp — zero config.
+- **Whipository** — your personal prompt library. Save the instructions you type ten times a day and fire them in a tap. Finally you don't have to repeat "make no mistakes"!
+- **Scheduled prompts** — queue "you hit the session limit, resume" for that 2am in the morning when your limit resets, and wake up the agent to finished the work, so you can sleep
+- **LashStash** — desktop automation. Record click-type-Enter sequences and run them on demand or on a schedule — stored securly only on your machine. 
+- **Notifications that reach you** — enable in browser notficiations to get a ping when when browser is closed. AI agient is idle, blocked or you just want to get notified whens ht change, notification tolls are limitless.
 
-On Windows the agent captures with the GPU **Desktop Duplication API** (ddagrab), which stays fast
-at 4K and captures **HDR** desktops correctly. On old Windows builds or GPUs without Direct3D 11 it
-falls back automatically to the legacy `gdigrab` grabber — that path can't read an HDR framebuffer,
-so if the screen there is black or full of artifacts, update your graphics driver or turn HDR off in
-**Settings → System → Display**.
+## How we use it?
+WhipDesk is packed with the things we use every single day to keep our own agents in line:
 
-## How it works
+- **Checking on agents from wherever we are** — before falling asleep, right after waking up, from the living-room couch, or from the garden while watching the kids. Pull out the phone, glance at the screen, whip if needed.
+- **Claude session limit resets at 2 am?** We schedule a prompt — "you hit the session limit, resume" — the dev box gets it right when the limit resets, and by morning there's a fresh session with the work done.
+- **We kept retyping the same prompts** — so we built the Whipository and now they're one tap away.
+- **Some rituals are pure repetition** — click the window, focus the prompt, type, press Enter, even unlock the dev box at night. That's why LashStash exists: a library of desktop automations stored only on the machine.
 
-A **desktop agent** (Node) captures the screen, injects input, and serves the **web controller**
-(a framework-light vanilla-TS PWA). They speak one message contract
-([`packages/protocol`](packages/protocol)) over WebRTC — one DataChannel for control plus H.264
-video tracks, all DTLS-encrypted — with two ways to broker the handshake:
+Even though WhipDesk is built mobile firsrt and AI agents focused, we are sure it will be usefull for genereal remove access connections and otehr use cases as well. We already caught use cases like "I am signed-in on Home Depot page on dev box and I need to check the order. I will nto sign in on mobile, let me connect to dev box from WhipDesk to check it". Silly but usefull. Let us know if you ahve interesting use cases and especially if you miss a feature!
 
-- **LAN** — the agent's own WebSocket swaps the SDP offer/answer; the media flows host-to-host
-  on your network, touching nothing else.
-- **Remote** — a WebSocket to the WhipDesk edge (Cloudflare) swaps the SDP; STUN connects
-  directly, with ephemeral-credential TURN as a last-resort relay. The same socket is what makes
-  the machine show "online" on the dashboard — no polling, no heartbeats.
 
-Every session goes through the same gate: pairing token → PIN challenge → only then does the
-screen start. Pointer coordinates travel normalized to `[0,1]`, so control is resolution- and
-Retina-independent. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design seams.
+## Why we built it?
 
-## Cloud (optional)
+WhipDesk was started by one person who we needed a tool to monitor AI agents from anywhere (from work, while watching kids, from the park, on vacation and did I mention work? Lunch time.. when you stuck in the office and AI at home is not working?). 
 
-LAN needs nothing. Remote access and the device dashboard run on the **hosted WhipDesk.com
-backend, which is baked into this repo** (`apps/desktop-agent/src/cloud/config.ts`) — so it just
-works out of the box. On startup the agent asks whether to enable secure cloud discovery; answer
-**No** to stay strictly LAN-only, and nothing ever leaves your network.
+After sharing it with few friends it become clear it might be usefull for more poeple. Because infrastucture cost money (especiall outside of local network connection) the idea was to share with community and run it on donations. 
 
-The cloud seam is small: Firebase Auth signs you in (passwordless email-link, same account as
-the website) and the **WhipDesk edge** (a Cloudflare Worker) carries presence + the WebRTC
-handshake over one authenticated WebSocket per machine. The baked-in values are a Firebase
-**web** config — public by design, the same ones whipdesk.com serves in its browser bundle. They
-are **not** secrets: there's no service-account key, cloud is opt-in, and every message is
-locked to your own account by your verified sign-in.
+LAN costs nothing so that's why this repo is all you need to run it yourselve. When you sign-in on WhipDesk.com you might however see a donate button. If your AI slop earned few $ this month and WhipDesk helped you with that, consider supporting it. See Pricing page on https://whipdesk.com/pricing/ for more details why it's all FREE.
 
-**Prefer your own backend?** Point the agent at your own Firebase project + edge service by
-dropping a web config (plus an `edgeUrl`) in `.whipdesk/firebase.json` (gitignored) — that file
-is the only override, and it replaces the baked-in default. The full walkthrough, including the
-small signaling contract your edge needs to speak, is in
-[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
+## Privacy & telemetry
 
-## Project layout
-
-```
-packages/protocol/      Types-only wire contract shared by both apps
-apps/desktop-agent/      Node host: capture, input, server, watchers, cloud
-apps/mobile-web/         Vite PWA controller, served by the agent
-scripts/                 notify.mjs + smoke-test harnesses
-docs/ARCHITECTURE.md     Design rationale
-docs/SELF_HOSTING.md     LAN-only setup + bring-your-own backend guide
-docs/HOOKS.md            Optional agent-native hooks for instant monitoring alerts
-```
-
-## Contributing
-
-PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[code of conduct](CODE_OF_CONDUCT.md). Read [AGENTS.md](AGENTS.md) first — it's the operating
-contract for both humans and AI coding agents (where each change goes, the wire-contract-first
-rule, how to verify). In short:
-
-```bash
-npm run typecheck    # tsc --noEmit across workspaces
-npm run test         # node --test (auth handshake, pin, monitor states, crypto, protocol contract)
-```
-
-## Security
-
-Found a vulnerability? Please open a [security advisory](https://github.com/BinaryBananaLLC/WhipDesk/security/advisories/new)
-rather than a public issue. Good-faith security research is welcome.
-
-### Privacy & telemetry
-
-WhipDesk contains **no analytics and no tracking**. The only network call the agent makes on its
-own is a daily **update check** to `https://whipdesk.com/api/version` ([source](https://github.com/BinaryBananaLLC/WhipDesk/blob/main/apps/desktop-agent/src/util/update-check.ts)),
-which carries exactly two things: the agent version (in the User-Agent) and the OS platform
-(`darwin`/`win32`/`linux`). No user id, no machine id, no IP retention — the server keeps only
-aggregate counts per version/platform/country so we know which releases are still out there.
-Packaged agents only; source checkouts never phone home.
-
-Disable it entirely with `.whipdesk/settings.json`:
+Sessions are end-to-end encrypted between your devices; even the relay only forwards sealed packets. WhipDesk.com sees just enough to introduce your devices: your email, machine name and OS, and online status. The agent contains **no analytics and no tracking**. The only self-initiated call is a daily update check ([source](apps/desktop-agent/src/util/update-check.ts)) carrying just the agent version and OS platform. You can turn it off in `.whipdesk/settings.json`:
 
 ```json
 { "updateCheck": false }
 ```
 
+Every release is built by GitHub Actions straight from the tagged source — signed, notarized, and [verifiable](docs/VERIFYING-DOWNLOADS.md). WhipDesk tells you when an update ships but never auto-updates (see [how to update](docs/UPDATING.md)).
+
+Don't take our word for it — the code is right here. Read it, or point your favorite AI agent at it for a security review.
+
+## Troubleshooting
+
+If you run into a black screen, wallpaper-only frames, or input that doesn't work, check the [OS permissions](#setup--permissions) first — these issues are almost always caused by that.
+
+You can also enable verbose logs, which help understand the issue better:
+
+```bash
+whipdesk --verbose
+```
+
+If the problem persists, reach out on the [GitHub issues](https://github.com/BinaryBananaLLC/WhipDesk/issues) page, on [Reddit](https://www.reddit.com/r/WhipDesk/), or by email at [contact@whipdesk.com](mailto:contact@whipdesk.com).
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md). Read [AGENTS.md](AGENTS.md) first: it's the operating contract for humans and AI coding agents alike.
+
+```bash
+npm install
+npm run dev          # builds the web controller, then starts the agent from source
+npm run typecheck
+npm run test
+```
+
+### Security
+
+Found a vulnerability? Please open a [security advisory](https://github.com/BinaryBananaLLC/WhipDesk/security/advisories/new) rather than a public issue. Good-faith security research is welcome — the threat model lives in [SECURITY.md](SECURITY.md).
+
 ## License
 
-[GNU AGPL-3.0](LICENSE). You're free to run, study, modify, and share WhipDesk. If you offer a
-modified version as a network service, the AGPL requires you to publish your source under the
-same license. For commercial licensing, contact BinaryBanana LLC.
-
-Everything that runs on your machine is in this repo, open source; the hosted
-[whipdesk.com](https://whipdesk.com) connectivity service (remote handshake, relays, device
-dashboard) is what might fund its development. The WhipDesk name and logo are trademarks of
-BinaryBanana LLC and aren't covered by the code license — forks need their own branding
-(see [TRADEMARK.md](TRADEMARK.md)).
+[GNU AGPL-3.0](LICENSE) — run it, study it, modify it, share it. If you offer a modified version as a network service, the AGPL requires publishing your source under the same license; for commercial licensing, contact BinaryBanana LLC. Everything that runs on your machine is in this repo; the hosted [WhipDesk.com](https://whipdesk.com) connectivity service is what funds development. The WhipDesk name and logo are trademarks of BinaryBanana LLC — forks need their own branding ([TRADEMARK.md](TRADEMARK.md)).
 
 ## Star History
 
