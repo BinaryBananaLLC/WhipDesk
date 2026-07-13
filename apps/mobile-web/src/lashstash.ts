@@ -26,6 +26,58 @@ const EXEC_COUNTDOWN_MS = 3000;
 /** Keys offered by the "Press key" step editor (names the input backends understand). */
 const STEP_KEYS = ["Enter", "Escape", "Tab", "Space", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown"] as const;
 
+/** Common editing shortcuts offered by the "Shortcut" step. Each becomes a `key` step pressing the
+ *  HOST's own chord (⌘ on macOS, Ctrl elsewhere), mirroring the live Interact → Shortcuts segment so
+ *  a saved lash runs exactly the same keys it would if you tapped them live. */
+const SHORTCUTS = [
+  { id: "select-all", label: "Select all" },
+  { id: "copy", label: "Copy" },
+  { id: "cut", label: "Cut" },
+  { id: "paste", label: "Paste" },
+  { id: "undo", label: "Undo" },
+  { id: "redo", label: "Redo" },
+] as const;
+
+/** The host's primary shortcut modifier: ⌘ on a macOS host, Ctrl everywhere else. */
+function hostShortcutModifier(platform: string): string {
+  return platform === "darwin" ? "meta" : "control";
+}
+
+/** The key step for a shortcut id, using the host platform's true chord (redo differs per OS:
+ *  ⇧⌘Z on macOS, Ctrl+Y on Windows, Ctrl+⇧Z elsewhere — matching controls.ts). */
+function shortcutStep(id: string, platform: string): LashStep {
+  const mod = hostShortcutModifier(platform);
+  switch (id) {
+    case "copy":
+      return { kind: "key", key: "c", modifiers: [mod] };
+    case "cut":
+      return { kind: "key", key: "x", modifiers: [mod] };
+    case "paste":
+      return { kind: "key", key: "v", modifiers: [mod] };
+    case "undo":
+      return { kind: "key", key: "z", modifiers: [mod] };
+    case "redo":
+      return platform === "win32"
+        ? { kind: "key", key: "y", modifiers: ["control"] }
+        : { kind: "key", key: "z", modifiers: [mod, "shift"] };
+    case "select-all":
+    default:
+      return { kind: "key", key: "a", modifiers: [mod] };
+  }
+}
+
+/** Pretty modifier labels so key steps read as chords (e.g. "Press ⌘+C") instead of "meta+c". */
+const MOD_LABELS: Record<string, string> = {
+  meta: "⌘",
+  cmd: "⌘",
+  command: "⌘",
+  control: "Ctrl",
+  ctrl: "Ctrl",
+  shift: "⇧",
+  alt: "⌥",
+  option: "⌥",
+};
+
 let counter = 0;
 function uid(): string {
   return `l${Date.now().toString(36)}${(counter++).toString(36)}`;
@@ -59,8 +111,11 @@ export function describeStep(step: LashStep, screen?: ScreenInfo): string {
       const teaser = t.length > 36 ? `${t.slice(0, 36)}…` : t;
       return `Type “${teaser}”${step.submit !== false ? " + Enter" : ""}`;
     }
-    case "key":
-      return `Press ${[...(step.modifiers ?? []), step.key ?? "?"].join("+")}`;
+    case "key": {
+      const mods = (step.modifiers ?? []).map((m) => MOD_LABELS[m.toLowerCase()] ?? m);
+      const k = step.key && step.key.length === 1 ? step.key.toUpperCase() : step.key ?? "?";
+      return `Press ${[...mods, k].join("+")}`;
+    }
     case "wait": {
       const s = (step.ms ?? 0) / 1000;
       return `Wait ${s >= 1 && Number.isInteger(s) ? s.toFixed(0) : s.toFixed(1)}s`;
@@ -93,6 +148,8 @@ export class LashStash {
   private activeDisplay = 0;
   /** All host displays — offered by the "Change monitor" step so a lash can span screens. */
   private displays: DisplayInfo[] = [];
+  /** Host OS ("darwin" | "win32" | …) — picks the platform-true chord for "Shortcut" steps. */
+  private hostPlatform = "";
   private overlay: HTMLElement | null = null;
   private opts: LashStashOpenOptions = {};
   /** Re-renders the open list view when the host's broadcast reconciles our optimistic state. */
@@ -118,6 +175,10 @@ export class LashStash {
 
   setDisplays(displays: DisplayInfo[]): void {
     this.displays = displays;
+  }
+
+  setHostPlatform(platform: string): void {
+    this.hostPlatform = platform;
   }
 
   open(opts: LashStashOpenOptions = {}): void {
@@ -495,6 +556,20 @@ export class LashStash {
         }
         openSub(sel, subActions(() => {
           pushSteps({ kind: "key", key: sel.value });
+          return true;
+        }));
+      });
+      chip("+ Shortcut", () => {
+        const sel = el("select", "wd-input");
+        for (const sc of SHORTCUTS) {
+          const o = document.createElement("option");
+          o.value = sc.id;
+          o.textContent = sc.label;
+          sel.appendChild(o);
+        }
+        const hint = el("p", "wd-dialog-help", "Presses the host's own chord (⌘ on macOS, Ctrl elsewhere) in whatever app is focused when the lash runs.");
+        openSub(hint, sel, subActions(() => {
+          pushSteps(shortcutStep(sel.value, this.hostPlatform));
           return true;
         }));
       });
