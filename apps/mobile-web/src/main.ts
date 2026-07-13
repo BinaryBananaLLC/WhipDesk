@@ -334,7 +334,27 @@ async function start(): Promise<void> {
     connecting.hide();
     pinPrompt.show(req, (pin) => conn.submitPin(pin));
   });
-  conn.on("presence", (count) => controls.setPresence(count));
+  // Single-session rule: a newer device took over. This must be TERMINAL — close() cancels the
+  // passive auto-reconnect (which replays the remembered PIN) or the two devices would kick each
+  // other in an endless loop. Taking back control simply reconnects, superseding the other side.
+  conn.on("superseded", () => {
+    conn.close();
+    connecting.hide();
+    pinPrompt.hide();
+    hideSharpPill();
+    resumePrompt.show(
+      () => {
+        resuming = true;
+        connecting.show("Reconnecting…");
+        conn.connect();
+      },
+      {
+        title: "Another device took the whip",
+        msg: "This computer is now being controlled from another device. Only one controller can be connected at a time.",
+        action: "Take back control",
+      },
+    );
+  });
   // Live rename echo: the agent broadcasts the new display name to every connected controller.
   conn.on("machineName", (name) => controls.setDeviceName(name));
   let regionCount = 0;

@@ -14,7 +14,7 @@
  *   The agent multiplies by the logical screen size before injecting input.
  */
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 /** Default network + capture values. This is the source of truth; agent config reads these. */
 export const DEFAULTS = {
@@ -576,10 +576,14 @@ export interface AuthRequiredMessage {
   attemptsLeft: number;
 }
 
-/** How many controllers are currently watching this host (delivered to controllers). */
-export interface PresenceMessage {
-  type: "presence";
-  watchers: number;
+/**
+ * This session has been taken over by a newer controller connection (single-session rule:
+ * the most recent device to pass token + PIN wins). The client must treat this as a terminal
+ * close — show a takeover notice and do NOT auto-reconnect, or the two devices would kick
+ * each other in a loop.
+ */
+export interface SupersededMessage {
+  type: "superseded";
 }
 
 export type NotificationLevel = "info" | "success" | "warning" | "error";
@@ -622,7 +626,7 @@ export type ServerMessage =
   | AuthRequiredMessage
   | ScreenMetaMessage
   | ScreenRegionMessage
-  | PresenceMessage
+  | SupersededMessage
   | WatchersMessage
   | TimersMessage
   | LashesMessage

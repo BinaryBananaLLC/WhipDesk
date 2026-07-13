@@ -97,8 +97,7 @@ textarea {
   padding: 6px 8px;
   overflow: hidden;
 }
-.wd-statusbar.collapsed .wd-status-text,
-.wd-statusbar.collapsed .wd-watchers {
+.wd-statusbar.collapsed .wd-status-text {
   display: none;
 }
 .wd-dot {
@@ -125,12 +124,6 @@ textarea {
   text-overflow: ellipsis;
   flex: 1 1 auto;
   min-width: 0;
-}
-.wd-watchers {
-  color: var(--warn);
-  font-weight: 700;
-  flex: none;
-  white-space: nowrap;
 }
 /* transport badge (LAN / Direct / STUN / TURN) shown next to the status dot */
 .wd-transport {

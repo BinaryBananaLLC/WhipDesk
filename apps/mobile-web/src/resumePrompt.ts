@@ -9,8 +9,23 @@ import whipMark from "./assets/whip.png";
  * (no network, no ICE) until the user chooses: Resume kicks off the reconnect (→ PIN); Back to
  * dashboard leaves. Only used for remote (whipdesk.com) sessions; LAN reconnects are cheap.
  */
+export interface ResumeCopy {
+  title: string;
+  msg: string;
+  action: string;
+}
+
+const DEFAULT_COPY: ResumeCopy = {
+  title: "Welcome back! \u{1F44B}",
+  msg: "Looks like you wandered off. Want to pick up right where you left off?",
+  action: "Resume whipping",
+};
+
 export class ResumePrompt {
   private readonly overlay: HTMLElement;
+  private readonly title: HTMLElement;
+  private readonly msg: HTMLElement;
+  private readonly resume: HTMLButtonElement;
   private onResume: (() => void) | null = null;
 
   constructor(root: HTMLElement, opts?: { dashboardEscape?: boolean }) {
@@ -26,22 +41,19 @@ export class ResumePrompt {
     whip.alt = "WhipDesk";
     whip.decoding = "async";
 
-    const title = document.createElement("h2");
-    title.textContent = "Welcome back! \u{1F44B}";
+    this.title = document.createElement("h2");
 
-    const msg = document.createElement("p");
-    msg.className = "wd-resume-msg";
-    msg.textContent = "Looks like you wandered off. Want to pick up right where you left off?";
+    this.msg = document.createElement("p");
+    this.msg.className = "wd-resume-msg";
 
-    const resume = document.createElement("button");
-    resume.className = "wd-resume-go";
-    resume.textContent = "Resume whipping";
-    resume.onclick = () => {
+    this.resume = document.createElement("button");
+    this.resume.className = "wd-resume-go";
+    this.resume.onclick = () => {
       this.hide();
       this.onResume?.();
     };
 
-    card.append(whip, title, msg, resume);
+    card.append(whip, this.title, this.msg, this.resume);
 
     if (opts?.dashboardEscape) {
       // Same quiet text-link treatment as the PIN dialog's back link.
@@ -63,8 +75,15 @@ export class ResumePrompt {
     return !this.overlay.classList.contains("hidden");
   }
 
-  /** Show the gate. `onResume` runs only if the user taps Resume (Back-to-dashboard navigates away). */
-  show(onResume: () => void): void {
+  /**
+   * Show the gate. `onResume` runs only if the user taps the action button (Back-to-dashboard
+   * navigates away). Pass `copy` to reuse the gate for other terminal states — e.g. the
+   * single-session takeover notice — instead of the default "you were away" wording.
+   */
+  show(onResume: () => void, copy: ResumeCopy = DEFAULT_COPY): void {
+    this.title.textContent = copy.title;
+    this.msg.textContent = copy.msg;
+    this.resume.textContent = copy.action;
     this.onResume = onResume;
     this.overlay.classList.remove("hidden");
   }

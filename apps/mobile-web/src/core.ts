@@ -17,7 +17,7 @@ import { responseFor, stretch } from "./crypto";
 // Mirrors PROTOCOL_VERSION in packages/protocol. Kept local so version-mismatch detection works
 // even against a protocol build that predates the constant. (The tiny isServerMessage guard IS
 // imported from the package — Vite inlines it.)
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
@@ -40,7 +40,11 @@ export interface ControllerEvents {
   /** Live link quality for the connection dialog: rendered frames/sec + round-trip ms. */
   netStats: { fps: number; rtt: number | null };
   notification: NotificationMessage;
-  presence: number;
+  /**
+   * A newer controller connection took over this single-session host. Terminal: the UI must
+   * close the transport (no auto-reconnect) and offer a manual "take back control" instead.
+   */
+  superseded: void;
   /** The machine's display name changed (someone renamed it via the connection dialog). */
   machineName: string;
   pinRequired: PinRequest;
@@ -101,7 +105,7 @@ export class ControllerCore {
     overviewTrack: new Set(),
     transport: new Set(),
     notification: new Set(),
-    presence: new Set(),
+    superseded: new Set(),
     machineName: new Set(),
     pinRequired: new Set(),
     watchers: new Set(),
@@ -215,8 +219,8 @@ export class ControllerCore {
       case "notification":
         this.emit("notification", message);
         break;
-      case "presence":
-        this.emit("presence", message.watchers);
+      case "superseded":
+        this.emit("superseded", undefined);
         break;
       case "machine-name":
         this.emit("machineName", message.name);

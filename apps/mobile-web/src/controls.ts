@@ -156,14 +156,12 @@ export class Controls {
   private readonly statusDot = el("span", "wd-dot");
   private readonly statusText = el("span", "wd-status-text", "Connecting…");
   private readonly transportBadge = el("span", "wd-transport hidden");
-  private readonly watchersText = el("span", "wd-watchers", "");
   private readonly alertBadge = el("span", "wd-badge hidden");
   private statusbar!: HTMLElement;
   private statusCollapseTimer = 0;
   private connectionOverlay!: HTMLElement;
   private connName!: HTMLElement;
   private connRoute!: HTMLElement;
-  private connPresence!: HTMLElement;
   private connSpeed!: HTMLElement;
   private connStatusDot!: HTMLElement;
   private connStatusText!: HTMLElement;
@@ -205,7 +203,6 @@ export class Controls {
   private ribbonHidden = false;
   private deviceName = "";
   private transport = "";
-  private presenceCount = 1;
   private status: ConnectionStatus = "connecting";
   private displays: DisplayInfo[] = [];
   private activeDisplay = 0;
@@ -299,13 +296,6 @@ export class Controls {
     this.renderMonitors();
   }
 
-  /** How many controllers (incl. this one) are connected to the host. */
-  setPresence(watchers: number): void {
-    this.presenceCount = watchers;
-    this.watchersText.textContent = watchers > 1 ? `● ${watchers} watching` : "";
-    if (this.connectionOverlay && !this.connectionOverlay.classList.contains("hidden")) this.renderConnection();
-  }
-
   // ---- connection dialog (opened by tapping the status pill) ----------------
   private buildConnectionDialog(): void {
     const overlay = el("div", "wd-dialog-overlay hidden");
@@ -354,11 +344,6 @@ export class Controls {
     this.connRoute = el("div", "wd-conn-route");
     routeRow.appendChild(this.connRoute);
 
-    const viewersRow = el("div", "wd-conn-row");
-    viewersRow.append(el("span", "wd-conn-label", "Viewers"));
-    this.connPresence = el("span", "wd-conn-value", "1");
-    viewersRow.appendChild(this.connPresence);
-
     const speedRow = el("div", "wd-conn-row");
     speedRow.append(el("span", "wd-conn-label", "Speed (FPS/latency)"));
     this.connSpeed = el("span", "wd-conn-value", "—");
@@ -390,8 +375,8 @@ export class Controls {
     );
     feedback.appendChild(links);
 
-    // Row order: Status, Connection, Speed, Machine (+HDR note), Viewers.
-    card.append(head, statusRow, routeRow, speedRow, nameRow, this.connHdr, viewersRow, this.connError, disconnect, support, feedback);
+    // Row order: Status, Connection, Speed, Machine (+HDR note).
+    card.append(head, statusRow, routeRow, speedRow, nameRow, this.connHdr, this.connError, disconnect, support, feedback);
     overlay.appendChild(card);
     this.root.appendChild(overlay);
     this.connectionOverlay = overlay;
@@ -409,7 +394,6 @@ export class Controls {
     }
     this.connName.textContent = this.deviceName || "Connected device";
     this.connHdr.classList.toggle("hidden", !this.hostHdr);
-    this.connPresence.textContent = String(Math.max(1, this.presenceCount));
     this.connRoute.replaceChildren();
     if (this.transport) {
       const badge = el("span", "wd-transport");
@@ -506,7 +490,7 @@ export class Controls {
     // No brand mark here — it read oddly next to the status dot. The whip lives on the PIN
     // prompt instead (see pinPrompt.ts).
     const status = el("div", "wd-statusbar");
-    status.append(this.statusDot, this.statusText, this.transportBadge, this.watchersText);
+    status.append(this.statusDot, this.statusText, this.transportBadge);
     status.onclick = () => this.openConnection();
     this.statusbar = status;
     this.buildConnectionDialog();

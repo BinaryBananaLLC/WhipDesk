@@ -470,7 +470,7 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     if (!looping) void runLoop();
   };
 
-  const updatePresence = () => presence.update(controllers.size);
+  const updatePresence = () => presence.update(controllers.size > 0);
 
   // Nobody is actually looking (every connected controller's tab is hidden): stop the H.264
   // encoder — no host CPU or bandwidth for frames no one sees. Region watchers and session
@@ -499,25 +499,35 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     },
     controllers,
     addController(controller) {
+      // Single-session rule: the newest device to pass token + PIN wins. Add the new
+      // controller BEFORE kicking the old one so the count never touches 0 mid-handover —
+      // that keeps the "last one out" reset (viewport, quality ladder, display sleep) from
+      // firing and the encoder's sinks from draining. The superseded client closes itself
+      // on receipt (and must not auto-reconnect); the delayed close is the fallback for a
+      // wedged client that never processes the message.
+      const superseded = [...controllers].filter((c) => c !== controller);
       controllers.add(controller);
-      log.info(`controller connected (${controllers.size} active)`);
+      for (const c of superseded) {
+        log.info("previous controller session superseded by a new connection");
+        c.send({ type: "superseded" });
+        setTimeout(() => c.close(4001, "superseded"), 300);
+      }
+      log.info("controller connected");
       // Refresh the HDR flag for FUTURE welcomes (this one ships the last known state — the
       // probe is async and HDR flips are rare enough that eventual consistency is fine).
       void windowsHdrState().then((s) => (ctx.hdrActive = s?.active === true));
       // The controller just passed token + PIN: wake the display so they can reach the lock screen
       // (and keep it on while they're connected). Synthetic input alone won't wake a slept panel.
       displayWake.setActive(true);
-      for (const c of controllers) c.send({ type: "presence", watchers: controllers.size });
       controller.send({ type: "watchers", regions: regionWatcher.list() });
       updatePresence();
       recomputeVideoPause();
     },
     removeController(controller) {
       controllers.delete(controller);
-      log.info(`controller disconnected (${controllers.size} active)`);
+      log.info("controller disconnected");
       // Last one out: let the display sleep & lock again for security.
       if (controllers.size === 0) displayWake.setActive(false);
-      for (const c of controllers) c.send({ type: "presence", watchers: controllers.size });
       updatePresence();
       // Last controller gone: reset the shared crop so the NEXT session starts on the full screen,
       // and reset the quality ladder — the next viewer's link starts at full quality.

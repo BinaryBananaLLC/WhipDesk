@@ -4,11 +4,11 @@ import { log } from "./logger";
 /**
  * Desktop-side "is this thing on?" reminder. WhipDesk runs headless, so we surface presence
  * two cheap, dependency-free ways:
- *   1. the terminal title (always shows running state + live watcher count), and
+ *   1. the terminal title (always shows running state + whether someone is watching), and
  *   2. a macOS notification when someone starts/stops watching.
  */
 export class Presence {
-  private watchers = 0;
+  private watching = false;
 
   start(): void {
     this.render();
@@ -27,26 +27,23 @@ export class Presence {
   }
 
   private render(): void {
-    const dot = this.watchers > 0 ? "🔴" : "🟢";
-    const label =
-      this.watchers > 0 ? `WhipDesk · 👀 ${this.watchers} watching` : "WhipDesk · running";
+    const dot = this.watching ? "🔴" : "🟢";
+    const label = this.watching ? "WhipDesk · 👀 watching" : "WhipDesk · running";
     this.setTitle(`${dot} ${label}`);
   }
 
-  /** Called whenever the authenticated watcher count changes. */
-  update(watchers: number): void {
-    const previous = this.watchers;
-    this.watchers = watchers;
+  /** Called whenever an authenticated watcher connects or disconnects. */
+  update(watching: boolean): void {
+    const previous = this.watching;
+    this.watching = watching;
     this.render();
 
-    if (previous === 0 && watchers > 0) {
-      log.info(`👀 someone is whipping your screen (${watchers} watching)`);
+    if (!previous && watching) {
+      log.info("👀 someone is whipping your screen");
       this.notify("👀 Someone is whipping your screen", "A WhipDesk controller just connected.");
-    } else if (previous > 0 && watchers === 0) {
+    } else if (previous && !watching) {
       log.info("screen no longer being watched");
-      this.notify("WhipDesk", "All controllers disconnected — nobody is watching now.");
-    } else if (watchers !== previous && watchers > 0) {
-      this.render();
+      this.notify("WhipDesk", "Controller disconnected — nobody is watching now.");
     }
   }
 
