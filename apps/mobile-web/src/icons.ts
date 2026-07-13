@@ -25,6 +25,11 @@ export type IconName =
   | "mouse-left-hold"
   | "mouse-right"
   | "double-click"
+  | "copy"
+  | "paste"
+  | "select-all"
+  | "undo"
+  | "redo"
   | "drag"
   | "send"
   | "insert"
@@ -73,6 +78,20 @@ const PATHS: Record<IconName, string> = {
     '<path fill="currentColor" stroke="none" d="M12 3.2V11H6.2V8.2A5.8 5.8 0 0 1 12 3.2Z"/>',
   "mouse-right": '<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v8h6V8"/>',
   "double-click": '<path d="m4 4 6 16 2.5-6.5L19 11Z"/><path d="M18 4v3M21 6h-3"/>',
+  // Two stacked sheets = copy the host's selection to this device.
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  // Clipboard with an arrow dropping in = paste this device's text onto the host.
+  paste:
+    '<rect x="8" y="2" width="8" height="4" rx="1"/>' +
+    '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>' +
+    '<path d="M12 10v6m-2.5-2.5L12 16l2.5-2.5"/>',
+  // Dashed selection frame around text lines = select everything on the host.
+  "select-all":
+    '<path d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M21 19a2 2 0 0 1-2 2M5 21a2 2 0 0 1-2-2"/>' +
+    '<path d="M10 3h4M10 21h4M3 10v4M21 10v4"/><path d="M8 9h8M8 13h6"/>',
+  // Curved arrows sweeping back/forward = undo/redo on the host.
+  undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/>',
+  redo: '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 15-6.7L21 13"/>',
   drag: '<path d="M12 2v20M2 12h20" /><path d="m8 6 4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>',
   send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4Z"/>',
   // Arrow dropping down into an open text field — reads as "insert this into the box you're typing in".

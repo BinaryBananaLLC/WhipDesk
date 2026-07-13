@@ -422,8 +422,34 @@ textarea {
   padding: 8px 8px;
 }
 .wd-group-items.wd-compact-row .wd-btn .wd-btn-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Narrow phones (iPhone SE / mini, ~320–389px): the five Interact buttons are roomy by default
+   (Pixel 7 and up keep that look), but on a small screen they'd overflow and get clipped at the
+   edges. Shed only the extra gap/padding + a hair of icon size here so all five snap back into one
+   row — no wrapping, no clipping, and no hardcoded tiny buttons on normal phones. */
+@media (max-width: 389px) {
+  .wd-group-items.wd-compact-row {
+    gap: 4px;
+  }
+  .wd-group-items.wd-compact-row .wd-btn {
+    gap: 4px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+  .wd-group-items.wd-compact-row .wd-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+  .wd-keys-row {
+    gap: 3px;
+  }
+  .wd-keys-row .wd-btn {
+    padding-left: 2px;
+    padding-right: 2px;
+  }
 }
 .wd-btn-label {
   line-height: 1;
@@ -658,11 +684,40 @@ textarea {
   font-size: 16px; /* >=16px stops iOS zoom-on-focus */
   font-family: inherit;
 }
+/* Clipboard dialog textarea (manual copy-out / paste-in fallback). */
+.wd-clip-text {
+  width: 100%;
+  resize: vertical;
+  min-height: 90px;
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 16px; /* >=16px stops iOS zoom-on-focus */
+  font-family: inherit;
+}
+/* Clipboard Copy/Paste before the agent advertises support (or while a copy is in flight). */
+.wd-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* Type → special keys (Esc/Tab/⌫/⏎/arrows): ONE row that never wraps. Equal-width keys (flex:1)
+   that shrink together to fit, so all eight stay on a single line down to ~320px. Roomy by default
+   (matches the rest of the ribbon); only the gap/padding tighten on narrow phones via the media
+   query below — the keys themselves stay full height, never a "hardcoded small" size. */
 .wd-keys-row {
   display: flex;
+  flex-wrap: nowrap;
   gap: 6px;
-  flex-wrap: wrap;
   justify-content: center;
+}
+.wd-keys-row .wd-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-left: 4px;
+  padding-right: 4px;
 }
 /* Type action row: 1×/2×/3× + Whips + Insert + Send on ONE line, never wrapping. Buttons split
    the width evenly and may shrink (min-width:0) — labels are kept terse in controls.ts so all six
@@ -1145,6 +1200,18 @@ textarea {
 .wd-mon-caveat a {
   color: inherit;
   text-decoration: underline;
+}
+/* Schedule-work heads-up: a locked/asleep machine can't run a timer; unlock steps live only on
+   the host. Tiny + muted with a hairline accent so it reads as a reminder, not an error. */
+.wd-lock-note {
+  margin: 10px 0 2px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+  background: var(--panel-2);
+  border-left: 2px solid var(--border);
+  border-radius: 8px;
 }
 .wd-watch-list {
   display: flex;

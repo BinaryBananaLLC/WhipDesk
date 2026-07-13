@@ -40,6 +40,8 @@ export interface ControllerEvents {
   /** Live link quality for the connection dialog: rendered frames/sec + round-trip ms. */
   netStats: { fps: number; rtt: number | null };
   notification: NotificationMessage;
+  /** Reply to a `clipboard-copy` request: the host's clipboard text ("" = empty/non-text). */
+  clipboardContent: { text: string; truncated?: boolean };
   /**
    * A newer controller connection took over this single-session host. Terminal: the UI must
    * close the transport (no auto-reconnect) and offer a manual "take back control" instead.
@@ -105,6 +107,7 @@ export class ControllerCore {
     overviewTrack: new Set(),
     transport: new Set(),
     notification: new Set(),
+    clipboardContent: new Set(),
     superseded: new Set(),
     machineName: new Set(),
     pinRequired: new Set(),
@@ -218,6 +221,9 @@ export class ControllerCore {
         break;
       case "notification":
         this.emit("notification", message);
+        break;
+      case "clipboard-content":
+        this.emit("clipboardContent", { text: message.text, truncated: message.truncated });
         break;
       case "superseded":
         this.emit("superseded", undefined);

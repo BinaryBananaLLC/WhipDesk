@@ -427,6 +427,8 @@ async function start(): Promise<void> {
     }
   });
   conn.on("notification", (n) => notifications.show(n));
+  // Host's reply to a Copy request — Controls lands it on this device's clipboard.
+  conn.on("clipboardContent", (content) => controls.handleClipboardContent(content));
   conn.on("error", (message) => controls.flashError(message));
 
   // Returning users who already granted notifications: refresh their push subscription so

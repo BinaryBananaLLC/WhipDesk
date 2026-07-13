@@ -5,7 +5,7 @@ import { DEFAULTS, PROTOCOL_VERSION } from "./index";
 // The wire contract. These values are shared by the agent and the controller; changing one
 // without the other breaks every connection, so pin them down here.
 test("protocol version is the expected wire version", () => {
-  assert.equal(PROTOCOL_VERSION, 1);
+  assert.equal(PROTOCOL_VERSION, 2);
 });
 
 test("network defaults are stable (changing these is a compatibility change)", () => {

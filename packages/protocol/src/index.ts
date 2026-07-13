@@ -37,6 +37,13 @@ export const DEFAULTS = {
   OVERVIEW_KBPS: 150,
 } as const;
 
+/**
+ * Cap for clipboard text in either direction (UTF-16 code units). Keeps a single control frame
+ * comfortably under the WebRTC data-channel message limit (~256 KB); longer text is truncated
+ * host-side and flagged via `clipboard-content.truncated`.
+ */
+export const CLIPBOARD_MAX_TEXT = 60_000;
+
 export type MouseButton = "left" | "right" | "middle";
 export type PointerAction = "move" | "down" | "up" | "click";
 
@@ -181,6 +188,26 @@ export interface TypeMessage {
   text: string;
   /** When true, press Enter after typing (submits the prompt). */
   submit?: boolean;
+}
+
+/**
+ * Copy whatever is selected on the HOST and return it: the agent presses the host's copy
+ * shortcut (⌘C on macOS, Ctrl+C elsewhere), waits for the clipboard to update, and replies to
+ * THIS controller with a `clipboard-content` message.
+ */
+export interface ClipboardCopyMessage {
+  type: "clipboard-copy";
+}
+
+/**
+ * Put `text` on the HOST clipboard. With `paste: true` the agent then presses the host's paste
+ * shortcut (⌘V / Ctrl+V), so the text lands in whatever app is focused there — the controller's
+ * "Paste" action. Text over CLIPBOARD_MAX_TEXT is truncated host-side.
+ */
+export interface ClipboardWriteMessage {
+  type: "clipboard-write";
+  text: string;
+  paste?: boolean;
 }
 
 /** Adjust the live capture pipeline at runtime. */
@@ -407,6 +434,8 @@ export type ClientMessage =
   | ScrollMessage
   | KeyMessage
   | TypeMessage
+  | ClipboardCopyMessage
+  | ClipboardWriteMessage
   | SetQualityMessage
   | SetViewportMessage
   | RequestFrameMessage
@@ -446,6 +475,8 @@ export interface AgentCapabilities {
   video?: boolean;
   /** Host can auto-detect + monitor running AI-agent sessions. */
   monitor?: boolean;
+  /** Host supports `clipboard-copy` / `clipboard-write` (keyboard backend + an OS clipboard tool). */
+  clipboard?: boolean;
 }
 
 export interface WelcomeMessage {
@@ -601,6 +632,17 @@ export interface NotificationMessage {
   t: number;
 }
 
+/**
+ * Reply to `clipboard-copy`: the host's clipboard text after its copy shortcut ran. Empty when
+ * nothing (or non-text content) was on the host clipboard. Sent only to the requesting controller.
+ */
+export interface ClipboardContentMessage {
+  type: "clipboard-content";
+  text: string;
+  /** True when the text was cut off at CLIPBOARD_MAX_TEXT. */
+  truncated?: boolean;
+}
+
 /** The machine's (possibly just-renamed) display name — broadcast after a `rename-machine`. */
 export interface MachineNameMessage {
   type: "machine-name";
@@ -634,6 +676,7 @@ export type ServerMessage =
   | MonitorsMessage
   | MonitorAlwaysAgentsMessage
   | NotificationMessage
+  | ClipboardContentMessage
   | MachineNameMessage
   | PongMessage
   | ErrorMessage;

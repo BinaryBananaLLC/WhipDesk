@@ -1,12 +1,14 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { platform } from "node:os";
 import {
+  CLIPBOARD_MAX_TEXT,
   PROTOCOL_VERSION,
   isClientMessage,
   type ClientMessage,
   type ServerMessage,
   type WelcomeMessage,
 } from "@whipdesk/protocol";
+import { clipboardAvailable, readClipboard, writeClipboard } from "../clipboard";
 import { AGENT_VERSION } from "../config";
 import { log } from "../logger";
 import type { CaptureOptions } from "../capture/screen";
@@ -191,6 +193,7 @@ function buildWelcome(ctx: AgentContext): WelcomeMessage {
       region: ctx.capturer.canCrop,
       video: ctx.videoAvailable,
       monitor: true,
+      clipboard: ctx.input.canKeyboard && clipboardAvailable(),
     },
     displays: ctx.displays.map(toDisplayInfo),
     activeDisplay: ctx.activeDisplay,
@@ -202,6 +205,11 @@ function buildWelcome(ctx: AgentContext): WelcomeMessage {
     notifications: ctx.hub.getRecent(),
   };
 }
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** The host's own copy/paste chord modifier (⌘ on macOS, Ctrl everywhere else). */
+const copyPasteModifier = () => (platform() === "darwin" ? "meta" : "control");
 
 async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Controller): Promise<void> {
   switch (msg.type) {
@@ -221,6 +229,36 @@ async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Contr
     case "type":
       await ctx.input.typeText(msg.text, msg.submit);
       break;
+    case "clipboard-copy": {
+      // Press the host's copy shortcut, then poll for the clipboard to change — apps populate it
+      // asynchronously. Unchanged after the timeout means the selection was empty or identical to
+      // what was already there, so the current clipboard is still the right answer.
+      const before = await readClipboard().catch(() => "");
+      await ctx.input.keyTap("c", [copyPasteModifier()]);
+      let text = before;
+      for (let i = 0; i < 8; i++) {
+        await sleep(120);
+        text = await readClipboard().catch(() => before);
+        if (text !== before) break;
+      }
+      const truncated = text.length > CLIPBOARD_MAX_TEXT;
+      controller.send({
+        type: "clipboard-content",
+        text: truncated ? text.slice(0, CLIPBOARD_MAX_TEXT) : text,
+        truncated: truncated || undefined,
+      });
+      break;
+    }
+    case "clipboard-write": {
+      const text = String(msg.text ?? "").slice(0, CLIPBOARD_MAX_TEXT);
+      if (!text) break;
+      await writeClipboard(text);
+      if (msg.paste) {
+        await sleep(60); // let the clipboard change settle before the focused app reads it
+        await ctx.input.keyTap("v", [copyPasteModifier()]);
+      }
+      break;
+    }
     case "set-quality": {
       const patch: Partial<CaptureOptions> = {};
       if (typeof msg.quality === "number") patch.quality = msg.quality;

@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { LASH_LIMITS, type Lash, type LashStep, type MouseButton } from "@whipdesk/protocol";
 
 // The LashStash: saved multi-step automations ("lashes"). They live in the state dir — NOT in
@@ -7,8 +8,65 @@ import { LASH_LIMITS, type Lash, type LashStep, type MouseButton } from "@whipde
 // timers.json, so they survive agent updates and disappear only with an uninstall. Everything is
 // sanitized on the way IN (save + load) so a hand-edited or corrupt file can't make the executor
 // click at NaN or type a megabyte.
+//
+// AT REST the file is ENCRYPTED (AES-256-GCM): a lash can hold the literal keystrokes to unlock
+// this box — including a password — so it must not sit in cleartext where a backup, a cloud-synced
+// folder, or a shoulder over the terminal could read it. See loadOrCreateKey() for the (honest)
+// threat model and why we can't one-way hash a password we later have to TYPE.
 
 const FILE = "lashes.json";
+const KEY_FILE = "lash.key"; // 32-byte AES key for the stash — this machine only, 0600
+const ENC_TAG = "wdlash1"; // marker on the at-rest envelope so we can tell it from legacy plaintext
+
+interface Envelope {
+  enc: string;
+  iv: string;
+  tag: string;
+  ct: string;
+}
+
+/**
+ * Load (or first-time mint) this machine's 32-byte lash key, kept beside the data (0600). Because
+ * a lash may need to TYPE a password to unlock the box, the agent must be able to recover the
+ * plaintext unattended — so the key can't depend on a human secret at run time and therefore lives
+ * on the same disk. That makes this real defense-in-depth (backups, synced folders, an accidentally
+ * shared file, a glance at the JSON) but NOT protection against an attacker who already has full
+ * access to this user account — which is exactly why a one-way hash is impossible here.
+ */
+function loadOrCreateKey(stateDir: string): Buffer {
+  const path = join(stateDir, KEY_FILE);
+  try {
+    const key = Buffer.from(readFileSync(path, "utf8").trim(), "base64");
+    if (key.length === 32) return key;
+  } catch {
+    /* missing/corrupt -> mint a fresh one below */
+  }
+  const key = randomBytes(32);
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(path, key.toString("base64"), { mode: 0o600 });
+  return key;
+}
+
+/** Wrap a JSON document in an authenticated AES-256-GCM envelope for on-disk storage. */
+function seal(stateDir: string, plaintext: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", loadOrCreateKey(stateDir), iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const env: Envelope = {
+    enc: ENC_TAG,
+    iv: iv.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+    ct: ct.toString("base64"),
+  };
+  return JSON.stringify(env);
+}
+
+/** Reverse of seal(); throws on a wrong key or tampered ciphertext (GCM auth). */
+function unseal(stateDir: string, env: Envelope): string {
+  const decipher = createDecipheriv("aes-256-gcm", loadOrCreateKey(stateDir), Buffer.from(env.iv, "base64"));
+  decipher.setAuthTag(Buffer.from(env.tag, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(env.ct, "base64")), decipher.final()]).toString("utf8");
+}
 
 const STEP_KINDS = new Set<LashStep["kind"]>(["click", "text", "key", "wait", "display"]);
 const BUTTONS = new Set<MouseButton>(["left", "right", "middle"]);
@@ -88,21 +146,27 @@ export function sanitizeLash(raw: unknown): Lash | null {
 export function loadLashes(stateDir: string): Lash[] {
   try {
     const raw = readFileSync(join(stateDir, FILE), "utf8");
-    const parsed = JSON.parse(raw) as { lashes?: unknown };
+    const outer = JSON.parse(raw) as Partial<Envelope> & { lashes?: unknown };
+    // Current format is the encrypted envelope; a legacy pre-encryption file has `lashes` directly
+    // and is read as-is (the next save re-writes it sealed). Anything else -> empty stash.
+    const parsed =
+      outer && outer.enc === ENC_TAG
+        ? (JSON.parse(unseal(stateDir, outer as Envelope)) as { lashes?: unknown })
+        : outer;
     if (!Array.isArray(parsed.lashes)) return [];
     return parsed.lashes
       .map(sanitizeLash)
       .filter((l): l is Lash => l !== null)
       .slice(0, LASH_LIMITS.MAX_LASHES);
   } catch {
-    return []; // missing/corrupt file => empty stash
+    return []; // missing/corrupt/undecryptable file => empty stash
   }
 }
 
 export function saveLashes(stateDir: string, lashes: Lash[]): void {
   try {
     mkdirSync(stateDir, { recursive: true });
-    writeFileSync(join(stateDir, FILE), JSON.stringify({ lashes }), { mode: 0o600 });
+    writeFileSync(join(stateDir, FILE), seal(stateDir, JSON.stringify({ lashes })), { mode: 0o600 });
   } catch {
     /* non-fatal: lashes just won't survive a restart */
   }

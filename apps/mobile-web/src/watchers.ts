@@ -725,7 +725,16 @@ export class RegionWatchers {
     };
     bar.append(cancel, next);
 
-    card.append(head, help, durRow, labelRow, actRow, bar);
+    // Tiny heads-up: a scheduled action can only run if the machine is awake AND unlocked. Users
+    // can prepend unlock steps (even a password) to a lash; those steps live only on the host,
+    // encrypted at rest (lash-store.ts) — never on the wire or in the cloud.
+    const lockNote = el(
+      "p",
+      "wd-lock-note",
+      "\u{1F512} WhipDesk can't run if your computer is asleep or locked. Remember to adjust your system settings to keep things awake for the timer.",
+    );
+
+    card.append(head, help, durRow, labelRow, actRow, lockNote, bar);
     overlay.appendChild(card);
     this.root.appendChild(overlay);
   }

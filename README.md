@@ -118,10 +118,10 @@ Either way, every connection must answer your PIN before the screen starts—and
 
 - **Actually usable on a phone:** Built mobile-first, not desktop-first squeezed onto a phone. Landscape mode, full-screen viewing, and touch-native controls make reading code on a 4K dev box feel natural.
 - **Smart zoom, crystal-clear text:** WhipDesk streams only the part of the screen you're looking at, so zoomed-in code stays razor-sharp even on weak cellular connections. Pan around, and the picture seamlessly updates while the stream catches up.
-- **Auto-Whips:** Get pinged the moment an agent is waiting on you, finishes a task, or crashes. Automatically detects Claude Code, Codex, Gemini CLI, Aider, GitHub Copilot CLI, opencode, Cursor Agent, and Amp—with zero config.
-- **Whipository:** Your personal prompt library. Save the instructions you type ten times a day and fire them off in a single tap. 
+- <img src="https://whipdesk.com/art-optimized/auto-whips-icon.webp" alt="Auto-Whips icon" width="22" height="22" align="top"> **Auto-Whips:** Get pinged the moment an agent is waiting on you, finishes a task, or crashes. Automatically detects Claude Code, Codex, Gemini CLI, Aider, GitHub Copilot CLI, opencode, Cursor Agent, and Amp—with zero config.
+- <img src="https://whipdesk.com/art-optimized/whipository.webp" alt="Whipository icon" width="22" height="22" align="top"> **Whipository:** Your personal prompt library. Save the instructions you type ten times a day and fire them off in a single tap. 
 - **Scheduled prompts:** Queue a message like "you hit the session limit, resume" for 2:00 AM when your limit resets, and wake up the agent to finish the work while you sleep.
-- **LashStash:** Desktop automation reimagined. Record click-type-Enter sequences and run them on demand or on a schedule—stored securely and locally only on your machine. 
+- <img src="https://whipdesk.com/art-optimized/lash-stash-icon.webp" alt="LashStash icon" width="22" height="22" align="top"> **LashStash:** Desktop automation reimagined. Record click-type-Enter sequences and run them on demand or on a schedule—stored encrypted, locally only on your machine.
 - **Push Notifications:** Enable browser notifications to get a ping even when your browser is closed. Whether your AI agent is idle, blocked, or you just want to know when things change, the notification possibilities are limitless.
 
 ## How we use it

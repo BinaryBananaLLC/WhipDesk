@@ -1,4 +1,9 @@
-import type { DisplayInfo, WelcomeMessage } from "@whipdesk/protocol";
+import {
+  CLIPBOARD_MAX_TEXT,
+  type DisplayInfo,
+  type NotificationLevel,
+  type WelcomeMessage,
+} from "@whipdesk/protocol";
 import type { ConnectionStatus, ControllerTransport } from "./core";
 import type { InputController } from "./input";
 import type { Notifications } from "./notifications";
@@ -21,6 +26,13 @@ interface Deps {
 }
 
 type Tab = "viewer" | "interact" | "type" | "monitor";
+
+/** Handles into an open clipboard fallback dialog (see openClipDialog). */
+interface ClipDialog {
+  ta: HTMLTextAreaElement;
+  action: HTMLButtonElement;
+  close: () => void;
+}
 
 const SPECIAL_KEYS: Array<[string, string]> = [
   ["Esc", "Escape"],
@@ -146,8 +158,10 @@ function transportLabel(t: string): string {
  *
  *  - Browse:   zoom −/+, pan, scroll/page; tap the screen to click, just like the real device.
  *  - Type:     write text — textarea + special keys + Insert (no Enter) / Send (Enter).
- *  - Interact: full control — Mouse|Touch segment. Mouse: Left, Left-held (latched button-down for
- *    dragging/resizing host windows), Right, Double, Drag.
+ *  - Interact: full control — Mouse|Touch|Shortcuts segment. Mouse: Left, Left-held (latched
+ *    button-down for dragging/resizing host windows), Right, Double, Drag. Shortcuts: Copy (host
+ *    selection → this device), Paste (this device → host), Select all, Undo, Redo — with
+ *    Ctrl/⌘ C/V/A/Z forwarded on desktop controllers (see onGlobalKey/onGlobalPaste).
  *  - Monitor:  pick which display to view + control.
  *
  * A chevron collapses the whole ribbon to a slim handle to free the screen.
@@ -198,7 +212,21 @@ export class Controls {
   private holdPill!: HTMLButtonElement;
 
   private activeTab: Tab | null = null;
-  private interactMode: "mouse" | "touch" = "mouse";
+  private interactMode: "mouse" | "touch" | "shortcuts" = "mouse";
+  // Host clipboard bridge (Interact → Shortcuts segment + desktop Ctrl/⌘ shortcuts). Platform picks
+  // the Select-all/Undo/Redo chords; the capability gates Copy/Paste (older agents ignore those).
+  private hostPlatform = "";
+  private clipboardCap = false;
+  private copyBtn: HTMLButtonElement | null = null;
+  private copyPending = false;
+  private copyTimeout = 0;
+  private clipOverlay: HTMLElement | null = null;
+  // Safari bridge: clipboard writes must START inside the user's tap, but the host's text arrives
+  // later — so the tap hands the browser a ClipboardItem wrapping a PROMISE, resolved when the
+  // clipboard-content reply lands (see armGestureCopy/handleClipboardContent).
+  private pendingCopyResolve: ((blob: Blob) => void) | null = null;
+  private pendingCopyReject: (() => void) | null = null;
+  private copyWriteAttempt: Promise<boolean> | null = null;
   private collapsed = false;
   private ribbonHidden = false;
   private deviceName = "";
@@ -274,10 +302,13 @@ export class Controls {
   setWelcome(w: WelcomeMessage): void {
     this.deviceName = w.agent.hostname;
     this.hostHdr = !!w.agent.hdr;
+    this.hostPlatform = w.agent.platform;
+    this.clipboardCap = !!w.capabilities.clipboard;
     this.renderStatusText();
     this.displays = w.displays ?? [];
     this.activeDisplay = w.activeDisplay ?? 0;
     this.renderMonitors();
+    if (this.interactHost) this.renderInteract(); // clipboard support is now known
     if (!w.capabilities.mouse) {
       this.deps.notifications.show({
         type: "notification",
@@ -577,6 +608,11 @@ export class Controls {
     this.root.appendChild(this.holdPill);
     this.deps.input.setLeftHoldListener((held) => this.onLeftHoldChanged(held));
 
+    // Desktop keyboards: forward Ctrl/⌘ C / V / A to the host (paste rides the paste EVENT so the
+    // browser hands us the clipboard text without a permissions prompt).
+    document.addEventListener("keydown", (e) => this.onGlobalKey(e));
+    document.addEventListener("paste", (e) => this.onGlobalPaste(e));
+
     this.selectTab("viewer");
   }
 
@@ -646,30 +682,36 @@ export class Controls {
     return pane;
   }
 
+  /** Pointer model behind each Interact segment: Shortcuts keeps Mouse-style taps/drags, so you
+   *  can still click into a field or drag-select text before hitting Copy/Paste. */
+  private interactionFor(mode: "mouse" | "touch" | "shortcuts"): "mouse" | "touch" {
+    return mode === "touch" ? "touch" : "mouse";
+  }
+
   private renderInteract(): void {
     const { input } = this.deps;
     this.interactHost.replaceChildren();
     this.holdLeftBtn = null; // reassigned below only in Mouse mode (Touch has no Hold button)
+    this.copyBtn = null; // reassigned below only in Shortcuts mode
 
     const modeGroup = el("div", "wd-group");
     const head = el("div", "wd-group-head");
     const title = el("span", "wd-group-label", "Mode");
     const toggle = el("div", "wd-mode-toggle");
-    const mouse = el("button", "wd-mode-btn", "Mouse");
-    const touch = el("button", "wd-mode-btn", "Touch");
-    mouse.classList.toggle("on", this.interactMode === "mouse");
-    touch.classList.toggle("on", this.interactMode === "touch");
-    mouse.onclick = () => {
-      this.interactMode = "mouse";
-      if (this.activeTab === "interact") this.deps.input.setInteraction("mouse");
-      this.renderInteract();
-    };
-    touch.onclick = () => {
-      this.interactMode = "touch";
-      if (this.activeTab === "interact") this.deps.input.setInteraction("touch");
-      this.renderInteract();
-    };
-    toggle.append(mouse, touch);
+    for (const [label, mode] of [
+      ["Mouse", "mouse"],
+      ["Touch", "touch"],
+      ["Shortcuts", "shortcuts"],
+    ] as const) {
+      const b = el("button", "wd-mode-btn", label);
+      b.classList.toggle("on", this.interactMode === mode);
+      b.onclick = () => {
+        this.interactMode = mode;
+        if (this.activeTab === "interact") this.deps.input.setInteraction(this.interactionFor(mode));
+        this.renderInteract();
+      };
+      toggle.appendChild(b);
+    }
     head.append(title, toggle);
 
     const items = el("div", "wd-group-items");
@@ -700,6 +742,27 @@ export class Controls {
         dragHold.classList.toggle("on", on);
       };
       items.append(left, holdLeft, right, dbl, dragHold);
+    } else if (this.interactMode === "shortcuts") {
+      items.classList.add("wd-compact-row");
+      const copy = iconBtn("copy", "Copy");
+      copy.title = "Copy the text selected on the host to this device";
+      copy.onclick = () => this.copyFromHost();
+      copy.disabled = !this.clipboardCap || this.copyPending;
+      this.copyBtn = copy;
+      const paste = iconBtn("paste", "Paste");
+      paste.title = "Paste this device's clipboard into the host's focused app";
+      paste.onclick = () => this.pasteToHost();
+      paste.disabled = !this.clipboardCap;
+      const selectAll = iconBtn("select-all", "Select all");
+      selectAll.title = "Select all in the host's focused app";
+      selectAll.onclick = () => this.selectAllOnHost();
+      const undo = iconBtn("undo", "Undo");
+      undo.title = "Undo in the host's focused app";
+      undo.onclick = () => this.undoRedoOnHost(false);
+      const redo = iconBtn("redo", "Redo");
+      redo.title = "Redo in the host's focused app";
+      redo.onclick = () => this.undoRedoOnHost(true);
+      items.append(copy, paste, selectAll, undo, redo);
     } else {
       const tap = iconBtn("pointer", "Tap");
       tap.onclick = () => input.click("left");
@@ -717,6 +780,343 @@ export class Controls {
 
     modeGroup.append(head, items);
     this.interactHost.append(modeGroup);
+    // Select all/Undo/Redo still work against any agent (they ride the plain key channel) — only
+    // the clipboard round-trip needs a host that speaks clipboard-copy/clipboard-write.
+    if (this.interactMode === "shortcuts" && !this.clipboardCap && this.status === "connected") {
+      this.interactHost.append(el("p", "wd-hint", "Copy/Paste needs a newer WhipDesk agent on the host."));
+    }
+  }
+
+  // ---- host clipboard bridge (Shortcuts segment + desktop Ctrl/⌘ shortcuts) ------------------
+
+  private toast(title: string, body: string, level: NotificationLevel = "info"): void {
+    this.deps.notifications.show({
+      type: "notification",
+      id: `clip-${Date.now()}`,
+      title,
+      body,
+      level,
+      source: "client",
+      t: Date.now(),
+    });
+  }
+
+  /** The host's own shortcut modifier — ⌘ on a macOS host, Ctrl everywhere else. */
+  private hostModifier(): string {
+    return this.hostPlatform === "darwin" ? "meta" : "control";
+  }
+
+  /** Ask the host to press its copy shortcut and send back the clipboard (→ clipboard-content). */
+  private copyFromHost(): void {
+    if (!this.clipboardCap || this.copyPending) return;
+    this.armGestureCopy();
+    this.deps.conn.send({ type: "clipboard-copy" });
+    this.setCopyPending(true);
+    // Re-enable even if the reply never arrives (link blip / very old agent).
+    this.copyTimeout = window.setTimeout(() => {
+      this.abortGestureCopy();
+      this.setCopyPending(false);
+    }, 5000);
+  }
+
+  /**
+   * Begin the local clipboard write NOW, inside the user's tap, handing the browser a PROMISE for
+   * the text. Safari (iOS + macOS) refuses any clipboard write that starts outside a user gesture —
+   * this promise-ClipboardItem form is the one async pattern it accepts, and it's what lets an
+   * iPhone Copy land directly on the phone's clipboard with no dialog. Browsers that don't take
+   * promise payloads just reject, and the reply path falls back to writeText / the manual dialog.
+   */
+  private armGestureCopy(): void {
+    this.copyWriteAttempt = null;
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return;
+    const pending = new Promise<Blob>((resolve, reject) => {
+      this.pendingCopyResolve = resolve;
+      this.pendingCopyReject = reject;
+    });
+    pending.catch(() => {}); // aborts (timeout / empty host clipboard) are expected, never unhandled
+    try {
+      this.copyWriteAttempt = navigator.clipboard
+        .write([new ClipboardItem({ "text/plain": pending })])
+        .then(() => true, () => false);
+    } catch {
+      this.abortGestureCopy(); // ClipboardItem refused the promise payload — plan B on reply
+    }
+  }
+
+  private abortGestureCopy(): void {
+    this.pendingCopyReject?.();
+    this.pendingCopyReject = null;
+    this.pendingCopyResolve = null;
+    this.copyWriteAttempt = null;
+  }
+
+  private setCopyPending(pending: boolean): void {
+    window.clearTimeout(this.copyTimeout);
+    this.copyPending = pending;
+    if (this.copyBtn) this.copyBtn.disabled = pending || !this.clipboardCap;
+  }
+
+  /** The host answered a copy request: land its text on THIS device's clipboard. */
+  handleClipboardContent(content: { text: string; truncated?: boolean }): void {
+    this.setCopyPending(false);
+    if (!content.text) {
+      this.abortGestureCopy();
+      this.toast("Nothing copied", `No text was selected on ${this.deviceName || "the host"} (its clipboard is empty).`);
+      return;
+    }
+    const note = content.truncated ? " (long text — truncated)" : "";
+    // Preferred: feed the write that STARTED inside the tap (Safari's requirement) and see
+    // whether the browser accepted it.
+    const attempt = this.copyWriteAttempt;
+    const resolve = this.pendingCopyResolve;
+    this.pendingCopyResolve = null;
+    this.pendingCopyReject = null;
+    this.copyWriteAttempt = null;
+    if (attempt && resolve) {
+      resolve(new Blob([content.text], { type: "text/plain" }));
+      void attempt.then((ok) => (ok ? this.toastCopied(note) : this.writeTextOrDialog(content.text, note)));
+      return;
+    }
+    this.writeTextOrDialog(content.text, note);
+  }
+
+  private toastCopied(note: string): void {
+    this.toast("Copied", `Text from ${this.deviceName || "the host"} is on this device's clipboard${note}.`, "success");
+  }
+
+  /** Plan B: plain writeText (fine outside a gesture on Chrome), else the manual copy dialog.
+   *  navigator.clipboard doesn't exist at all on a plain-http LAN session — dialog it is. */
+  private writeTextOrDialog(text: string, note: string): void {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => this.toastCopied(note),
+        () => this.openCopyFallback(text),
+      );
+    } else {
+      this.openCopyFallback(text);
+    }
+  }
+
+  /** Send text to the host clipboard and press its paste shortcut. */
+  private sendClipboardText(text: string): void {
+    if (!text || !this.clipboardCap) return;
+    if (text.length > CLIPBOARD_MAX_TEXT) {
+      text = text.slice(0, CLIPBOARD_MAX_TEXT);
+      this.toast("Text truncated", "The pasted text was very long and was cut off.", "warning");
+    }
+    this.deps.conn.send({ type: "clipboard-write", text, paste: true });
+    navigator.vibrate?.(15);
+  }
+
+  /** Paste button: read THIS device's clipboard if the browser allows it, else ask via dialog. */
+  private pasteToHost(): void {
+    if (!this.clipboardCap) return;
+    if (!navigator.clipboard?.readText) return this.openPasteFallback();
+    navigator.clipboard.readText().then(
+      (text) => (text ? this.sendClipboardText(text) : this.openPasteFallback()),
+      () => this.openPasteFallback(), // permission denied / unsupported — type or paste manually
+    );
+  }
+
+  /** Select all in the host's focused app (⌘A on a macOS host, Ctrl+A elsewhere). */
+  private selectAllOnHost(): void {
+    this.deps.conn.send({ type: "key", key: "a", modifiers: [this.hostModifier()] });
+    navigator.vibrate?.(15);
+  }
+
+  /** Undo/redo in the host's focused app, with the platform-true redo chord:
+   *  ⇧⌘Z on macOS, Ctrl+Y on Windows, Ctrl+Shift+Z elsewhere. */
+  private undoRedoOnHost(redo: boolean): void {
+    if (!redo) {
+      this.deps.conn.send({ type: "key", key: "z", modifiers: [this.hostModifier()] });
+    } else if (this.hostPlatform === "win32") {
+      this.deps.conn.send({ type: "key", key: "y", modifiers: ["control"] });
+    } else {
+      this.deps.conn.send({ type: "key", key: "z", modifiers: [this.hostModifier(), "shift"] });
+    }
+    navigator.vibrate?.(15);
+  }
+
+  /** Manual copy dialog: shown only when every direct write path was refused (plain-http LAN). */
+  private openCopyFallback(text: string): void {
+    const dialog = this.openClipDialog({
+      title: `Copied from ${this.deviceName || "host"}`,
+      help: "Browsers block direct clipboard writes on LAN (http) connections. Check the text below, then press Copy to clipboard.",
+      action: "Copy to clipboard",
+      onAction: () => this.copyDialogText(dialog),
+    });
+    dialog.ta.value = text;
+    dialog.ta.readOnly = true;
+  }
+
+  /**
+   * Copy the dialog textarea SYNCHRONOUSLY inside the button tap. iOS Safari ignores programmatic
+   * selection on a readonly control and drops any selection made before the tap, so it all has to
+   * happen here, in one gesture: un-readonly → focus → select → execCommand("copy") → restore.
+   * The selection itself is belt-and-braces (a DOM Range plus setSelectionRange — iOS has dropped
+   * each one alone), and it is VERIFIED before trusting execCommand, which can report success
+   * while nothing was selected. writeText is the async plan B; failing that, copy by hand.
+   */
+  private copyDialogText(dialog: ClipDialog): void {
+    const { ta } = dialog;
+    ta.readOnly = false;
+    ta.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(ta);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    ta.setSelectionRange(0, ta.value.length);
+    const selected = ta.value.length > 0 && ta.selectionEnd - ta.selectionStart === ta.value.length;
+    let ok = false;
+    try {
+      ok = selected && document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    ta.readOnly = true;
+    ta.blur(); // put the mobile keyboard away
+    if (ok) return this.confirmCopyDialog(dialog);
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(ta.value).then(
+        () => this.confirmCopyDialog(dialog),
+        () => this.toast("Copy failed", "Select the text in the box and copy it manually.", "warning"),
+      );
+    } else {
+      this.toast("Copy failed", "Select the text in the box and copy it manually.", "warning");
+    }
+  }
+
+  /** In-dialog confirmation: the button morphs to "✓ Copied" for a beat, then the dialog closes. */
+  private confirmCopyDialog(dialog: ClipDialog): void {
+    dialog.action.replaceChildren(icon("check", 16), el("span", "wd-btn-label", "Copied"));
+    dialog.action.disabled = true;
+    window.setTimeout(dialog.close, 900);
+  }
+
+  /** Manual paste dialog for browsers that won't hand us the clipboard up front (a declined or
+   *  re-promptable permission, Firefox, plain-http LAN). One press of "Paste to host" reads the
+   *  clipboard itself when the API exists — the permission prompt then appears inside that tap.
+   *  On plain-http LAN the browser exposes NO clipboard-read API at all, so the paste EVENT
+   *  (long-press → Paste / Ctrl+V) is the only bridge — it sends the instant text lands. */
+  private openPasteFallback(): void {
+    const canRead = !!navigator.clipboard?.readText;
+    const dialog = this.openClipDialog({
+      title: `Paste to ${this.deviceName || "host"}`,
+      help: canRead
+        ? "This browser asks before handing over the clipboard. Press Paste to host and allow it — or paste into the box; it's sent the moment the text lands."
+        : "Browsers block clipboard reading on LAN (http) connections, so one step is manual: tap the box and long-press → Paste (or press Ctrl+V). The text is sent the moment it lands.",
+      action: "Paste to host",
+      onAction: (value) => {
+        if (value) return sendNow(value);
+        // Empty box: fetch the clipboard right here, inside the tap, where the browser allows it.
+        if (navigator.clipboard?.readText) {
+          navigator.clipboard.readText().then(
+            (text) =>
+              text ? sendNow(text) : this.toast("Clipboard is empty", "Copy some text first, then try again.", "warning"),
+            () => this.toast("Clipboard access refused", "Paste into the box instead — it sends automatically.", "warning"),
+          );
+        } else {
+          this.toast("Nothing to send", "Long-press in the box and tap Paste — it sends automatically.", "warning");
+        }
+      },
+    });
+    const sendNow = (text: string) => {
+      if (!text) return;
+      dialog.close();
+      this.sendClipboardText(text);
+      this.toast("Sent", `Pasted to ${this.deviceName || "the host"}.`, "success");
+    };
+    // The paste EVENT hands us the text with no permission prompt — the moment it lands, send it.
+    dialog.ta.addEventListener("paste", (e) => {
+      const pasted = e.clipboardData?.getData("text/plain") ?? "";
+      if (!pasted) return;
+      e.preventDefault();
+      sendNow(pasted);
+    });
+    dialog.ta.placeholder = "Paste text here…";
+    dialog.ta.focus();
+  }
+
+  /** One-off clipboard dialog (standard overlay: backdrop tap + Esc dismiss). */
+  private openClipDialog(opts: {
+    title: string;
+    help: string;
+    action: string;
+    onAction: (value: string, close: () => void) => void;
+  }): ClipDialog {
+    this.clipOverlay?.remove(); // never stack two clipboard dialogs
+    const overlay = el("div", "wd-dialog-overlay");
+    this.clipOverlay = overlay;
+    const close = () => {
+      overlay.remove();
+      if (this.clipOverlay === overlay) this.clipOverlay = null;
+    };
+    overlay.addEventListener("pointerdown", (e) => {
+      if (e.target === overlay) close();
+    });
+    const card = el("div", "wd-dialog");
+    const head = el("div", "wd-dialog-head");
+    head.append(el("h2", "", opts.title));
+    const x = el("button", "wd-dialog-x");
+    x.appendChild(icon("x"));
+    x.onclick = close;
+    head.appendChild(x);
+    const help = el("p", "wd-dialog-help", opts.help);
+    const ta = el("textarea", "wd-clip-text");
+    ta.rows = 5;
+    const actions = el("div", "wd-dialog-actions");
+    const go = el("button", "wd-btn wd-go", opts.action);
+    go.onclick = () => opts.onAction(ta.value, close);
+    actions.appendChild(go);
+    card.append(head, help, ta, actions);
+    overlay.appendChild(card);
+    this.root.appendChild(overlay);
+    return { ta, action: go, close };
+  }
+
+  /** True when the event targets a field that should keep the browser's native clipboard keys. */
+  private isEditableTarget(target: EventTarget | null): boolean {
+    return target instanceof Element && !!target.closest("input, textarea, select, [contenteditable]");
+  }
+
+  /**
+   * Desktop-to-desktop shortcuts: Ctrl/⌘+C copies the HOST's selection, Ctrl/⌘+A selects all
+   * there, Ctrl/⌘+Z / ⇧⌘Z / Ctrl+Y undo/redo there. Never intercepted while typing in a local
+   * field, and a local on-page selection keeps native copy so dialog/notification text stays
+   * copyable. (Ctrl/⌘+V arrives via onGlobalPaste — the paste EVENT hands us the clipboard text
+   * without any permission prompt.)
+   */
+  private onGlobalKey(e: KeyboardEvent): void {
+    if (e.defaultPrevented || !(e.metaKey || e.ctrlKey) || e.altKey) return;
+    if (this.status !== "connected" || this.isEditableTarget(e.target)) return;
+    const key = e.key.toLowerCase();
+    if (key === "z") {
+      e.preventDefault();
+      this.undoRedoOnHost(e.shiftKey);
+      return;
+    }
+    if (e.shiftKey) return;
+    if (key === "c") {
+      if (window.getSelection()?.toString()) return;
+      if (!this.clipboardCap) return;
+      e.preventDefault();
+      this.copyFromHost();
+    } else if (key === "a") {
+      e.preventDefault();
+      this.selectAllOnHost();
+    } else if (key === "y") {
+      e.preventDefault();
+      this.undoRedoOnHost(true);
+    }
+  }
+
+  private onGlobalPaste(e: ClipboardEvent): void {
+    if (this.status !== "connected" || !this.clipboardCap || this.isEditableTarget(e.target)) return;
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!text) return;
+    e.preventDefault();
+    this.sendClipboardText(text);
   }
 
   private buildTypePane(): HTMLElement {
@@ -758,8 +1158,9 @@ export class Controls {
     const whipsBeside = whipButton(() => this.deps.whipository.open((text) => this.insertIntoPrompt(text)));
     inputRow.append(this.promptInput, histNav, whipsBeside);
 
-    // Special keys wrap together so no single key takes a whole row.
-    const keys = el("div", "wd-wrap");
+    // Special keys share ONE row that never wraps: equal-width keys that shrink to fit, so all
+    // eight stay on a single line even on a 320–375px phone (see .wd-keys-row).
+    const keys = el("div", "wd-keys-row");
     for (const [label, key] of SPECIAL_KEYS) {
       const b = btn(label);
       b.onclick = () => conn.send({ type: "key", key });
@@ -917,7 +1318,7 @@ export class Controls {
     // Map the tab to an interaction model. Interact uses the currently selected mode; the other
     // tabs use "viewer", where a tap also clicks directly (double/triple taps = double/triple
     // clicks) unless the Pan or drag-to-scroll tool is active.
-    this.deps.input.setInteraction(tab === "interact" ? this.interactMode : "viewer");
+    this.deps.input.setInteraction(tab === "interact" ? this.interactionFor(this.interactMode) : "viewer");
     if (tab === "type") window.setTimeout(() => this.promptInput.focus(), 50);
   }
 

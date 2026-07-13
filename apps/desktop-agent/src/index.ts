@@ -8,14 +8,23 @@ import { startDeviceRegistry, type RegistryHandle } from "./cloud/registry";
 import { startPushPublisher, type PushPublisherHandle } from "./cloud/push-publisher";
 import { fetchIceServers } from "./cloud/ice";
 import { startSignaling, type SignalingHandle } from "./signaling/edge";
-import { log } from "./logger";
+import { log, beginPrompt, endPrompt } from "./logger";
 import { getLanIp, printBanner, printConnectInfo, printSetupReminder } from "./net";
 import { startAgent } from "./server";
 
 /** Prompt helper for interactive cloud sign-in (visible echo; not a secret). */
 function ask(question: string): Promise<string> {
+  // Hold async log lines (update check, HDR heads-up, cloud reconnects) while the question is on
+  // screen so they can't print onto the prompt line; endPrompt() flushes them after the answer.
+  beginPrompt();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => rl.question(question, (a) => (rl.close(), resolve(a))));
+  return new Promise((resolve) =>
+    rl.question(question, (a) => {
+      rl.close();
+      endPrompt();
+      resolve(a);
+    }),
+  );
 }
 
 /**
