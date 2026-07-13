@@ -1,8 +1,6 @@
 <div align="center">
 
-# WhipDesk — Control AI Coding Agents from Anywhere
-
-<!-- ###  -->
+# WhipDesk - Control AI Coding Agents From Anywhere
 
 [![CI](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/BinaryBananaLLC/WhipDesk)](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest)
@@ -12,16 +10,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 
-
-
-
-
-
-<img src="https://whipdesk.com/art-optimized/site_poster.webp" alt="WhipDesk — your AI coding agents, controlled from your phone" width="720" />
-
-
-
-
+<img src="https://whipdesk.com/art-optimized/site_poster.webp" alt="WhipDesk - your AI coding agents, controlled from your phone" width="720" />
 
 [WhipDesk.com](https://whipdesk.com) · [Install](#install) · [Features](#features) · [How it works](#how-it-works) · [FAQ](https://whipdesk.com/faq/)
 </div>
@@ -56,66 +45,68 @@ TODO
 
 ## Quick Start
 
-### On developemnt machine 
-Install agent on dev machine by using on of the options:
-#### 🍎 macOS
+### 1. Install the agent on your dev machine
+
+#### macOS
 
 ```bash
 # npm
 npm install -g whipdesk
 
-# Homebrew
+# or Homebrew
 brew install --cask BinaryBananaLLC/whipdesk/whipdesk
 
-# Quick install
+# or Quick install
 curl -fsSL https://whipdesk.com/install.sh | bash
 ```
 
-#### 🪟 Windows
+#### Windows
 
 ```powershell
 # npm
 npm install -g whipdesk
 
-# Quick install
+# or Quick install
 powershell -c "irm https://whipdesk.com/install.ps1 | iex"
 
-# Scoop
+# or Scoop
 scoop install whipdesk
 ```
 
-#### 🐧 Linux
+#### Linux
 
 ```bash
 # npm
 npm install -g whipdesk
 
-# Quick install
+# or Quick install
 curl -fsSL https://whipdesk.com/install.sh | bash
 ```
 
-__and start it by calling__
+### 2. Start WhipDesk
 
 ```bash
 whipdesk
 ```
 
-You will be asked to set an access PIN to unlock dev machine. Depndingon on your OS, you might need to also __grant permissions__ to allow whipdesk to control your device remoetly:
+On first run, WhipDesk will ask you to set an access PIN. Use at least 6 characters.
 
-- **macOS** — grant **Screen Recording** and **Accessibility** (System Settings → Privacy & Security) to the app that *launched* the agent — Terminal, iTerm, or VS Code — then fully quit and reopen that app.
-- **Windows** — works out of the box. To see and control elevated windows (UAC prompts, apps run as administrator), launch your terminal as administrator.
-- **Linux** — X11 works out of the box. Wayland needs your desktop's screen-share portal (`xdg-desktop-portal` plus your compositor's backend).
+Depending on your OS, you may also need to grant permissions so WhipDesk can capture the screen and control input:
 
-### On your phone (connected to the same Wifi)
+- **macOS** - grant **Screen Recording** and **Accessibility** in System Settings -> Privacy & Security to the app that launched the agent, such as Terminal, iTerm, or VS Code. Then fully quit and reopen that app.
+- **Windows** - works out of the box. To see and control elevated windows, launch your terminal as Administrator.
+- **Linux** - X11 works out of the box. On Wayland you need `xdg-desktop-portal` plus your compositor's screen-share backend.
 
-Scan QR code from the console to intiaite connection, enter PIN and you are ready yo Whip lazy AI!
+### 3. Connect from your phone 
+#### On the same Wi-Fi / LAN
 
-### On your phone (not connected to the same Wifi/LAN)
-**To connect from outside your local network**, sign in with the same email address (no password needed) on [WhipDesk.com](https://whipdesk.com) and on your dev machine during setup — your machine will appear in your [dashboard](https://whipdesk.com/dashboard/), ready to connect from anywhere.
+Scan the QR code printed in the terminal, open the link, enter your PIN, and connect. No account, no cloud dependency, and nothing leaves your network.
 
-<div align="center">
-<img src="https://whipdesk.com/art-optimized/readme1.webp" alt="WhipDesk — control AI coding agents from anywhere" width="720" />
-</div>
+#### Connect from anywhere
+
+To conenct your devices outside of your local network, they need a way to find each other — that's where WhipDesk.com comes in. Sign in with the same email address on [WhipDesk.com](https://whipdesk.com) and in the agent during setup. Your dev machines will appear in your [dashboard](https://whipdesk.com/dashboard/), ready to connect from anywhere.
+
+WhipDesk.com will handle device discovery, signaling, and optional push notifications. 
 
 ## How it works?
 
@@ -133,6 +124,10 @@ Sign in with the same email account on [WhipDesk.com](https://whipdesk.com) and 
 
 Either way, every connection has to answer your PIN before the screen starts — and the PIN itself never crosses the wire. Design details live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the threat model in [SECURITY.md](SECURITY.md). 
 
+
+<div align="center">
+<img src="https://whipdesk.com/art-optimized/readme1.webp" alt="WhipDesk — control AI coding agents from anywhere" width="720" />
+</div>
 
 ## What makes WhipDesk unique?
 
@@ -163,9 +158,11 @@ After sharing it with few friends it become clear it might be usefull for more p
 
 LAN costs nothing so that's why this repo is all you need to run it yourselve. When you sign-in on WhipDesk.com you might however see a donate button. If your AI slop earned few $ this month and WhipDesk helped you with that, consider supporting it. See Pricing page on https://whipdesk.com/pricing/ for more details why it's all FREE.
 
-## Privacy & telemetry
+## Privacy and Telemetry
 
-Sessions are end-to-end encrypted between your devices; even the relay only forwards sealed packets. WhipDesk.com sees just enough to introduce your devices: your email, machine name and OS, and online status. The agent contains **no analytics and no tracking**. The only self-initiated call is a daily update check ([source](apps/desktop-agent/src/util/update-check.ts)) carrying just the agent version and OS platform. You can turn it off in `.whipdesk/settings.json`:
+Sessions are end-to-end encrypted between your devices. WhipDesk.com sees only what it needs to connect your own devices: your email address, device name, platform/version, online status, and connection handshake metadata.
+
+The agent contains **no analytics and no tracking**. Its only self-initiated network call is the update check, which sends just the running version and OS platform. You can turn that off in `.whipdesk/settings.json`:
 
 ```json
 { "updateCheck": false }
@@ -175,21 +172,22 @@ Every release is built by GitHub Actions straight from the tagged source — sig
 
 Don't take our word for it — the code is right here. Read it, or point your favorite AI agent at it for a security review.
 
+
 ## Troubleshooting
 
-If you run into a black screen, wallpaper-only frames, or input that doesn't work, check the [OS permissions](#setup--permissions) first — these issues are almost always caused by that.
+If you see a black screen, wallpaper-only frames, or input that does not work, check OS permissions first. On macOS, almost every capture/input failure comes from missing **Screen Recording** or **Accessibility** permission, or from forgetting to restart the app that launched the agent after granting them.
 
-You can also enable verbose logs, which help understand the issue better:
+For deeper logs:
 
 ```bash
 whipdesk --verbose
 ```
 
-If the problem persists, reach out on the [GitHub issues](https://github.com/BinaryBananaLLC/WhipDesk/issues) page, on [Reddit](https://www.reddit.com/r/WhipDesk/), or by email at [contact@whipdesk.com](mailto:contact@whipdesk.com).
+If the problem persists, open an issue on [GitHub](https://github.com/BinaryBananaLLC/WhipDesk/issues), post on [Reddit](https://www.reddit.com/r/WhipDesk/), or email (if you really really have to) [contact@whipdesk.com](mailto:contact@whipdesk.com).
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md). Read [AGENTS.md](AGENTS.md) first: it's the operating contract for humans and AI coding agents alike.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and read [AGENTS.md](AGENTS.md) first for the repo's working contract.
 
 ```bash
 npm install
@@ -198,13 +196,17 @@ npm run typecheck
 npm run test
 ```
 
-### Security
+LAN mode is fully self-contained in this repo, and the remote path is documented enough to inspect, review, and extend. If you want to build on top of WhipDesk or point it at your own backend, start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [SECURITY.md](SECURITY.md), and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
 
-Found a vulnerability? Please open a [security advisory](https://github.com/BinaryBananaLLC/WhipDesk/security/advisories/new) rather than a public issue. Good-faith security research is welcome — the threat model lives in [SECURITY.md](SECURITY.md).
+## Reporting Security Issues
+
+Found a vulnerability? Please open a [GitHub security advisory](https://github.com/BinaryBananaLLC/WhipDesk/security/advisories/new) instead of a public issue. Good-faith security research is welcome.
 
 ## License
 
-[GNU AGPL-3.0](LICENSE) — run it, study it, modify it, share it. If you offer a modified version as a network service, the AGPL requires publishing your source under the same license; for commercial licensing, contact BinaryBanana LLC. Everything that runs on your machine is in this repo; the hosted [WhipDesk.com](https://whipdesk.com) connectivity service is what funds development. The WhipDesk name and logo are trademarks of BinaryBanana LLC — forks need their own branding ([TRADEMARK.md](TRADEMARK.md)).
+[GNU AGPL-3.0](LICENSE) - run it, study it, modify it, and share it. If you offer a modified version as a network service, the AGPL requires publishing your source under the same license. For commercial licensing, contact BinaryBanana LLC.
+
+The WhipDesk name and logo are trademarks of BinaryBanana LLC. Forks need their own branding; see [TRADEMARK.md](TRADEMARK.md).
 
 ## Star History
 
