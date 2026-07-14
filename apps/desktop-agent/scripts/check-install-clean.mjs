@@ -25,7 +25,10 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { EXTERNAL } from "./build-bundle.mjs";
+// EXTERNAL only — imported from the esbuild-free module (NOT build-bundle.mjs) because this script
+// runs in CI without `npm ci`, so esbuild (a devDep) isn't installed; loading build-bundle.mjs here
+// would throw ERR_MODULE_NOT_FOUND on its top-level esbuild import.
+import { EXTERNAL } from "./bundle-externals.mjs";
 
 const agentDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(agentDir, "package.json"), "utf8"));
