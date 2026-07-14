@@ -60,10 +60,15 @@ class RtpRestamper {
  * which keeps the signaling to one offer/answer round-trip.
  */
 
-/** Public STUN fallback (Google's free servers). The signaling layer normally passes the full
- * STUN+TURN list minted by the edge; this is only used when that list is unavailable. */
+/** Public STUN fallback. Cloudflare's anycast STUN leads, Google's free servers are the last
+ * resort. The signaling layer normally passes the full STUN+TURN list minted by the edge; this is
+ * only used when that list is unavailable. */
 export function stunServers(): { urls: string }[] {
-  return [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+  return [
+    { urls: "stun:stun.cloudflare.com:3478" },
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ];
 }
 
 export interface WebRtcAnswer {

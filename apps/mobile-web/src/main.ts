@@ -20,6 +20,8 @@ interface HashParams {
   token: string;
   remote: boolean;
   device: string;
+  /** Debug-only (#relay=1): force iceTransportPolicy "relay" to exercise the TURN path. */
+  relay: boolean;
 }
 
 function parseHash(): HashParams {
@@ -28,6 +30,7 @@ function parseHash(): HashParams {
     token: params.get("t") ?? params.get("token") ?? "",
     remote: params.get("remote") === "1" || params.has("device"),
     device: params.get("device") ?? params.get("d") ?? "",
+    relay: params.get("relay") === "1",
   };
 }
 
@@ -58,7 +61,7 @@ canvas.id = "wd-screen";
 const toasts = el("div", "wd-toasts");
 app.append(canvas, toasts);
 
-const { token, remote, device } = parseHash();
+const { token, remote, device, relay } = parseHash();
 installEscToClose();
 const view = new ScreenView(canvas);
 const notifications = new Notifications(toasts);
@@ -72,7 +75,7 @@ const resumePrompt = new ResumePrompt(app, { dashboardEscape: remote && !!device
 
 async function makeTransport(remoteConfig: FirebaseWebConfig | null): Promise<ControllerTransport> {
   if (remote && device) {
-    if (remoteConfig) return new RemoteConnection(device, token, remoteConfig);
+    if (remoteConfig) return new RemoteConnection(device, token, remoteConfig, { forceRelay: relay });
     notifications.show({
       type: "notification",
       id: "no-fb",

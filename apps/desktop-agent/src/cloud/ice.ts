@@ -10,9 +10,11 @@ export interface IceServer {
   credential?: string;
 }
 
-// Public STUN fallback (Google's free servers) — used ONLY if fetching the real STUN+TURN list from
-// the edge fails. Our own relay hostnames are are minted and returned at runtime by the edge worker (see fetchIceServers below).
+// Public STUN fallback — used ONLY if fetching the real STUN+TURN list from the edge fails.
+// Cloudflare's anycast STUN leads, Google's free servers are the last resort. WhipDesk relay
+// hostnames are minted and returned at runtime by the edge worker (see fetchIceServers below).
 const FALLBACK_STUN: IceServer[] = [
+  { urls: "stun:stun.cloudflare.com:3478" },
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];

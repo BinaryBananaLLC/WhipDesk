@@ -29,9 +29,13 @@ const WS_SIGNAL_TIMEOUT_MS = 4_000;
 const HTTP_SIGNAL_POLL_MS = 1_500;
 const HTTP_SIGNAL_TTL_MS = 2 * 60_000; // matches the hub's pending-session TTL
 
-// Public STUN fallback (Google's free servers). The backend normally supplies the full STUN+TURN
-// list via fetchIceServers; this is used only if that fetch fails.
-const STUN = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+// STUN fallback used only if fetchIceServers fails: Cloudflare's anycast STUN first, Google's free
+// servers as a last resort. The backend normally supplies the full STUN+TURN list.
+const STUN = [
+  { urls: "stun:stun.cloudflare.com:3478" },
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
 
 /** Read the selected ICE route from getStats: TURN (relay), STUN (srflx), or LAN (host). */
 async function detectTransport(pc: RTCPeerConnection): Promise<"TURN" | "STUN" | "LAN" | null> {
@@ -95,6 +99,7 @@ export class RemoteConnection {
     private readonly deviceId: string,
     token: string,
     private readonly config: FirebaseWebConfig,
+    private readonly opts: { forceRelay?: boolean } = {},
   ) {
     this.core = new ControllerCore(token);
     this.core.setSender((text) => {
@@ -248,7 +253,7 @@ export class RemoteConnection {
     // STUN pair wins on its own and TURN is used only as a genuine last resort — no probe, no
     // teardown/rebuild (that was the main cause of the minute-long connects over TURN).
     const iceServers = await this.fetchIceServers(auth.currentUser);
-    const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: "all" });
+    const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: this.opts.forceRelay ? "relay" : "all" });
     this.pc = pc;
     const dc = pc.createDataChannel("whipdesk");
     dc.binaryType = "arraybuffer";
