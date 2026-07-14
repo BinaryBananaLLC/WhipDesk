@@ -38,7 +38,6 @@ Install the CLI, scan the QR code, and start managing your AI agents from your p
 <img src="https://whipdesk.com/art/readme/install_full.webp" alt="WhipDesk - quick installation" width="502" />
 </div>
 
-## Quick Start
 
 ### 1. Install the agent on your dev machine
 
