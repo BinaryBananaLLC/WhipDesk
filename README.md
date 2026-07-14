@@ -30,13 +30,12 @@ Modern AI workflows require more than traditional tools can offer:
 
 **Free, open-source, and end-to-end encrypted**. WhipDesk works entirely on your local network without any account—or from anywhere in the world with a free sign-in at [WhipDesk.com](https://whipdesk.com).
 
-## Demo
+## Up and Running in Seconds
 
-<!-- TODO(demo video): terminal `npm install -g whipdesk` → `whipdesk` (LAN, skip cloud) → phone scans the QR →
-     zoom into VS Code, browse files, view a diff, type a new prompt to the AI →
-     "To connect beyond your local network, sign in on WhipDesk.com and in your agent" → connecting from the park. -->
+Install the CLI, scan the QR code, and start managing your AI agents from your phone in seconds.
+
 <div align="center">
-<video src="https://whipdesk.com/art/demo_readme.mp4" autoplay loop muted playsinline width="750"></video>
+<img src="https://whipdesk.com/art/readme/install_full.webp" alt="WhipDesk - quick installation" width="502" />
 </div>
 
 ## Quick Start
