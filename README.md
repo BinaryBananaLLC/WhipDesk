@@ -35,8 +35,9 @@ Modern AI workflows require more than traditional tools can offer:
 <!-- TODO(demo video): terminal `npm install -g whipdesk` → `whipdesk` (LAN, skip cloud) → phone scans the QR →
      zoom into VS Code, browse files, view a diff, type a new prompt to the AI →
      "To connect beyond your local network, sign in on WhipDesk.com and in your agent" → connecting from the park. -->
-
-TODO
+<div align="center">
+<video src="https://whipdesk.com/art/demo_readme.mp4" autoplay loop muted playsinline width="750"></video>
+</div>
 
 ## Quick Start
 
