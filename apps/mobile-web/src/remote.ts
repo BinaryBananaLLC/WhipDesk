@@ -94,12 +94,15 @@ export class RemoteConnection {
   // WhipDesk for X hrs". Never flush this on a timer: a per-minute flush is one row write per
   // user per minute, which at scale is millions of writes a day for a vanity counter.
   private flushConnectedTime: (() => void) | null = null;
+  // Set by fetchIceServers ONLY when the edge confirms the caller is an admin (echoes `forced`).
+  // A non-admin's #relay=… hash param never flips this, so it can't force relay-only.
+  private forcedRelay = false;
 
   constructor(
     private readonly deviceId: string,
     token: string,
     private readonly config: FirebaseWebConfig,
-    private readonly opts: { forceRelay?: boolean } = {},
+    private readonly opts: { relay?: string } = {},
   ) {
     this.core = new ControllerCore(token);
     this.core.setSender((text) => {
@@ -253,7 +256,8 @@ export class RemoteConnection {
     // STUN pair wins on its own and TURN is used only as a genuine last resort — no probe, no
     // teardown/rebuild (that was the main cause of the minute-long connects over TURN).
     const iceServers = await this.fetchIceServers(auth.currentUser);
-    const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: this.opts.forceRelay ? "relay" : "all" });
+    // Relay-only is applied ONLY when the edge confirmed admin (this.forcedRelay), never straight from the #relay hash.
+    const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: this.forcedRelay ? "relay" : "all" });
     this.pc = pc;
     const dc = pc.createDataChannel("whipdesk");
     dc.binaryType = "arraybuffer";
@@ -627,35 +631,48 @@ export class RemoteConnection {
    * Cached in sessionStorage so reconnects skip the round trip. Falls back to our own STUN. */
   private async fetchIceServers(user: { getIdToken(): Promise<string> }): Promise<RTCIceServer[]> {
     const fallback: RTCIceServer[] = [...STUN];
-    try {
-      const cached = sessionStorage.getItem("wd-ice");
-      if (cached) {
-        const { servers, exp } = JSON.parse(cached) as { servers: RTCIceServer[]; exp: number };
-        if (Array.isArray(servers) && servers.length && exp > Date.now()) return servers;
+    // #relay=<v> is a debug relay override, honored by the edge ONLY for admins. "1" just asks for
+    // relay policy (normal mint); any other value names a target (cf / a specific host). Send it as
+    // ?force=… and bypass the cache both ways: skip the read so it always re-mints and re-checks
+    // admin, and skip the write below so a forced mint never leaks into a normal session.
+    const force = this.opts.relay ? (this.opts.relay === "1" ? "relay" : this.opts.relay) : undefined;
+    this.forcedRelay = false;
+    if (!force) {
+      try {
+        const cached = sessionStorage.getItem("wd-ice");
+        if (cached) {
+          const { servers, exp } = JSON.parse(cached) as { servers: RTCIceServer[]; exp: number };
+          if (Array.isArray(servers) && servers.length && exp > Date.now()) return servers;
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
     }
     // Behind CGNAT (mobile in the mountains) a relay is MANDATORY — STUN-only can't punch through,
     // so degrading to the public-STUN fallback there means "never connects". A single flaky request
     // must not doom the attempt: retry a few times with backoff before giving up on TURN. The fetch
     // itself has no timeout, so a merely-slow link waits rather than falling back prematurely.
-    const url = this.config.iceUrl || `${(this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "")}/v1/ice`;
+    let url = this.config.iceUrl || `${(this.config.edgeUrl ?? DEFAULT_EDGE_URL).replace(/\/$/, "")}/v1/ice`;
+    if (force) url += `${url.includes("?") ? "&" : "?"}force=${encodeURIComponent(force)}`;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const token = await user.getIdToken();
         cacheToken(token);
         const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
         if (res.ok) {
-          const body = (await res.json()) as { iceServers?: RTCIceServer[] };
+          const body = (await res.json()) as { iceServers?: RTCIceServer[]; forced?: boolean };
           if (Array.isArray(body.iceServers) && body.iceServers.length) {
-            try {
-              sessionStorage.setItem(
-                "wd-ice",
-                JSON.stringify({ servers: body.iceServers, exp: Date.now() + 8 * 60_000 }),
-              );
-            } catch {
-              /* ignore */
+            // Only the edge's echoed `forced` (admin-gated) turns on relay-only — never the raw param.
+            this.forcedRelay = body.forced === true;
+            if (!force) {
+              try {
+                sessionStorage.setItem(
+                  "wd-ice",
+                  JSON.stringify({ servers: body.iceServers, exp: Date.now() + 8 * 60_000 }),
+                );
+              } catch {
+                /* ignore */
+              }
             }
             return body.iceServers;
           }

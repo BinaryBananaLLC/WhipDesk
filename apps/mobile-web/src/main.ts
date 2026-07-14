@@ -20,8 +20,8 @@ interface HashParams {
   token: string;
   remote: boolean;
   device: string;
-  /** Debug-only (#relay=1): force iceTransportPolicy "relay" to exercise the TURN path. */
-  relay: boolean;
+  /** Debug-only relay override — the ENTIRE ability is ADMIN-ONLY */
+  relay: string;
 }
 
 function parseHash(): HashParams {
@@ -30,7 +30,7 @@ function parseHash(): HashParams {
     token: params.get("t") ?? params.get("token") ?? "",
     remote: params.get("remote") === "1" || params.has("device"),
     device: params.get("device") ?? params.get("d") ?? "",
-    relay: params.get("relay") === "1",
+    relay: params.get("relay") ?? "",
   };
 }
 
@@ -75,7 +75,9 @@ const resumePrompt = new ResumePrompt(app, { dashboardEscape: remote && !!device
 
 async function makeTransport(remoteConfig: FirebaseWebConfig | null): Promise<ControllerTransport> {
   if (remote && device) {
-    if (remoteConfig) return new RemoteConnection(device, token, remoteConfig, { forceRelay: relay });
+    // The relay override is enforced entirely by the edge (admin-gated); the client just forwards
+    // the raw #relay value and obeys the edge's answer.
+    if (remoteConfig) return new RemoteConnection(device, token, remoteConfig, { relay });
     notifications.show({
       type: "notification",
       id: "no-fb",
