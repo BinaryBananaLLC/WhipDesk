@@ -51,8 +51,15 @@ function Get-Verified([string]$asset) {
   Say "Downloading $asset"
   Invoke-WebRequest -Uri "$Base/$asset" -OutFile $file -UseBasicParsing
   Say "Verifying checksum"
-  $sums = (Invoke-WebRequest -Uri "$Base/SHA256SUMS.txt" -UseBasicParsing).Content
-  $line = ($sums -split "`n") | Where-Object { $_ -match [regex]::Escape($asset) } | Select-Object -First 1
+  # Download the sums to a file and read it with Get-Content — do NOT parse (IWR).Content directly.
+  # GitHub serves release assets as Content-Type: application/octet-stream, so on Windows PowerShell
+  # .Content comes back as a Byte[], not a string; splitting that on newlines yields the space-joined
+  # byte values instead of text and every filename lookup fails ("not found in SHA256SUMS.txt").
+  $sumsFile = Join-Path $tmp "SHA256SUMS.txt"
+  Invoke-WebRequest -Uri "$Base/SHA256SUMS.txt" -OutFile $sumsFile -UseBasicParsing
+  # Lines are "<sha256>  <filename>"; match the filename field exactly (not a substring), so
+  # whipdesk-...-x64.zip can never be confused with whipdesk-...-x64-setup.exe.
+  $line = Get-Content $sumsFile | Where-Object { ($_ -split "\s+", 2)[1] -eq $asset } | Select-Object -First 1
   if (-not $line) { Fail "$asset not found in SHA256SUMS.txt" }
   $expected = ($line -split "\s+")[0].ToLower()
   $actual = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower()
