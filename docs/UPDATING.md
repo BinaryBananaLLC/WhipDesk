@@ -11,7 +11,7 @@ you or loses your settings.
 
 ## How you're notified
 
-When you cut a release, three independent things surface it — you don't have to be watching the
+When a new release ships, three independent things surface it — you don't have to be watching the
 terminal:
 
 | Where | What you see | Source |

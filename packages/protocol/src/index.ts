@@ -14,7 +14,7 @@
  *   The agent multiplies by the logical screen size before injecting input.
  */
 
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 /** Default network + capture values. This is the source of truth; agent config reads these. */
 export const DEFAULTS = {
@@ -152,6 +152,18 @@ export interface AuthMessage {
 export interface VisibilityMessage {
   type: "visibility";
   visible: boolean;
+}
+
+/**
+ * Human-presence signal for the idle-park clock: the user physically interacted with the
+ * CONTROLLER UI (tap/keypress/mouse move), but that gesture didn't produce host input — e.g. they
+ * are watching an agent work and don't want to inject a click into the host. Counts as user
+ * intent (resets the idle-park timer) but performs NO host action. The controller throttles it to
+ * at most one a minute, so a session with a human at the screen never parks while a truly
+ * abandoned one still does.
+ */
+export interface StillHereMessage {
+  type: "still-here";
 }
 
 export interface PointerMessage {
@@ -430,6 +442,7 @@ export type ClientMessage =
   | HelloMessage
   | AuthMessage
   | VisibilityMessage
+  | StillHereMessage
   | PointerMessage
   | ScrollMessage
   | KeyMessage
@@ -654,6 +667,29 @@ export interface PongMessage {
   t: number;
 }
 
+/**
+ * Idle-input warning: no USER input (pointer/scroll/key/type/clipboard/viewport/display) has
+ * reached the host for a while, so the session will be PARKED soon unless the user does something.
+ * Any real gesture already sends a pointer/etc. message, which resets the host's idle timer — so
+ * the controller only has to surface a "tap to stay" nudge. `secondsLeft` is the grace remaining.
+ */
+export interface IdleWarnMessage {
+  type: "idle-warn";
+  secondsLeft: number;
+}
+
+/**
+ * The host parked this session after the idle-input timeout: it's about to close the connection so
+ * an abandoned session can't hold a TURN allocation (and the host display awake) forever. The
+ * controller treats this like `superseded` — stop auto-reconnect and show a one-tap resume gate.
+ * Monitors, timers, and web push keep running host-side while parked; resuming is cheap (the PIN
+ * is remembered in memory). `reason` is currently always "idle".
+ */
+export interface ParkedMessage {
+  type: "parked";
+  reason: string;
+}
+
 export interface ErrorMessage {
   type: "error";
   message: string;
@@ -679,6 +715,8 @@ export type ServerMessage =
   | ClipboardContentMessage
   | MachineNameMessage
   | PongMessage
+  | IdleWarnMessage
+  | ParkedMessage
   | ErrorMessage;
 
 // ---------------------------------------------------------------------------

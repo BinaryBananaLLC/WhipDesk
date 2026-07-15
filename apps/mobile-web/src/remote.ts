@@ -660,11 +660,21 @@ export class RemoteConnection {
         cacheToken(token);
         const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
         if (res.ok) {
-          const body = (await res.json()) as { iceServers?: RTCIceServer[]; forced?: boolean };
+          const body = (await res.json()) as {
+            iceServers?: RTCIceServer[];
+            forced?: boolean;
+            limited?: string;
+            retryAfterSec?: number;
+          };
           if (Array.isArray(body.iceServers) && body.iceServers.length) {
             // Only the edge's echoed `forced` (admin-gated) turns on relay-only — never the raw param.
             this.forcedRelay = body.forced === true;
-            if (!force) {
+            // The edge withheld a relay (quota/capacity/ban): tell the UI instead of silently going
+            // STUN-only, and do NOT cache the degraded answer — the next attempt must re-mint so it
+            // isn't pinned to STUN-only after the quota/budget resets.
+            if (body.limited) {
+              this.core.emit("relayLimited", { reason: body.limited, retryAfterSec: body.retryAfterSec });
+            } else if (!force) {
               try {
                 sessionStorage.setItem(
                   "wd-ice",

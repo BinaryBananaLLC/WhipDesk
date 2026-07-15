@@ -50,19 +50,32 @@ mouse+keyboard) or `AppleScriptInputBackend` (keyboard-only `osascript` fallback
 prompt" still works if native input fails to load). Both take normalized coords + cached
 logical size.
 
+## Session monitor (Auto-Whips)
+
+`monitor/` is the zero-config engine behind Auto-Whips: it observes agent processes and their
+transcripts to infer whether Claude Code, Codex, Aider, etc. are *working* or *stopped*, so users
+never change how they launch an agent. The inference is deliberately debounced — a working agent
+goes quiet mid-turn all the time — which costs up to ~30 s of latency on the "stopped" edge. Agents
+that support native hooks can collapse that to zero by POSTing `/api/agent-event`
+(`monitor.recordAgentEvent`); see [HOOKS.md](HOOKS.md). Hooks *refine* the monitor, they don't
+replace it: an event with no live monitored session is a 404.
+
+`lash-store.ts` (recorded LashStash click/type sequences) and `timer-store.ts` (scheduled prompts)
+persist host-side under `.whipdesk/` and execute through the same input backend.
+
 ## Notifications
 
 `NotificationHub` fans events to every connected controller (+ a small recent-event buffer).
-Sources: `POST /api/notify` webhook (the AI-completion path) and an opt-in file-pattern
-watcher. Background push to a *closed* PWA is opt-in web push: `cloud/push-publisher.ts` relays
+Sources: the session monitor above, the `POST /api/notify` webhook (the generic/AI-completion
+path), and an opt-in file-pattern watcher. Background push to a *closed* PWA is opt-in web push: `cloud/push-publisher.ts` relays
 alerts over the agent's cloud connection, and the backend delivers them as encrypted Web Push to
 the subscriptions registered by `mobile-web/src/push.ts`.
 
 ## Cloud (opt-in, OFF by default)
 
 LAN works with no account. Answering **yes** to the startup prompt enables the device registry
-(machines appear in the web dashboard) and WebRTC signaling. Auth is the REAL user via
-passwordless email-link (NO anonymous auth) — agent and web sign in as the same person, and
+(machines appear in the web dashboard) and WebRTC signaling. Auth is always the real user via
+passwordless email-link — never anonymous auth. Agent and web sign in as the same person, and
 every backend request is authenticated and scoped to that one account. The PIN is an app-layer
 gate on top of DTLS. The client side of the whole cloud contract lives in this repo; see
 [SELF_HOSTING.md](SELF_HOSTING.md) to point the agent at your own backend.

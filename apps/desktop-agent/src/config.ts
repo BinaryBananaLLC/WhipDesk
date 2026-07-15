@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULTS } from "@whipdesk/protocol";
 import { isPackaged } from "./util/paths";
+import { loadAgentSettings } from "./cloud/config";
 
 // Single source of truth, generated from package.json (scripts/sync-version.mjs). Re-exported here
 // because callers (index.ts, cloud registry) already import it from "./config".
@@ -29,6 +30,9 @@ export interface AgentConfig {
   stateDir: string;
   /** Block system/idle sleep while the agent runs (display may still sleep). Default on. */
   keepAwake: boolean;
+  /** Minutes of NO user input before a controller session is parked (disconnected, one-tap resume);
+   *  0 disables. Default 60. Read from `.whipdesk/settings.json` (`idleMinutes`). */
+  idleMinutes: number;
 }
 
 function loadOrCreateToken(): string {
@@ -81,6 +85,12 @@ export function saveMachineName(dir: string, name: string): void {
 }
 
 export function loadConfig(): AgentConfig {
+  const settings = loadAgentSettings(stateDir);
+  // Idle-park window: default 60 min, `0` disables, anything invalid falls back to 60.
+  const idleMinutes =
+    typeof settings.idleMinutes === "number" && Number.isFinite(settings.idleMinutes) && settings.idleMinutes >= 0
+      ? Math.floor(settings.idleMinutes)
+      : 60;
   return {
     port: DEFAULTS.PORT,
     token: loadOrCreateToken(),
@@ -91,5 +101,6 @@ export function loadConfig(): AgentConfig {
     watchRegex: "done|finished|completed",
     stateDir,
     keepAwake: true,
+    idleMinutes,
   };
 }

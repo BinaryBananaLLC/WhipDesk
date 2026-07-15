@@ -84,9 +84,12 @@ export function loadCloudConfig(stateDir: string): CloudConfig {
  * Optional local agent settings — `.whipdesk/settings.json` (gitignored). The ONLY override
  * surface besides firebase.json, per the no-env-vars/no-CLI-params rule. Currently:
  *   { "updateCheck": false }   — disable the daily version check against whipdesk.com/api/version
+ *   { "idleMinutes": 60 }      — minutes of NO user input before a controller session is parked
+ *                                (disconnected with a one-tap resume); 0 disables. Default 60.
  */
 export interface AgentSettings {
   updateCheck?: boolean;
+  idleMinutes?: number;
 }
 
 export function loadAgentSettings(stateDir: string): AgentSettings {
