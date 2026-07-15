@@ -49,6 +49,8 @@ interface EdgeIncoming {
   rid?: string;
   iceServers?: IceServer[];
   ttlSec?: number;
+  limited?: string;
+  retryAfterSec?: number;
 }
 
 type Handler = (msg: EdgeIncoming) => void;
@@ -125,7 +127,7 @@ export class EdgeClient {
   }
 
   /** In-band ICE mint (STUN + ephemeral TURN) over the already-open hub socket. */
-  requestIce(): Promise<{ iceServers: IceServer[]; ttlSec: number } | null> {
+  requestIce(): Promise<{ iceServers: IceServer[]; ttlSec: number; limited?: string } | null> {
     if (!this.isConnected()) return Promise.resolve(null);
     const rid = Math.random().toString(36).slice(2, 10);
     return new Promise((resolve) => {
@@ -139,7 +141,7 @@ export class EdgeClient {
         this.iceWaiters.delete(rid);
         resolve(
           Array.isArray(msg.iceServers) && msg.iceServers.length > 0
-            ? { iceServers: msg.iceServers, ttlSec: Number(msg.ttlSec) || 600 }
+            ? { iceServers: msg.iceServers, ttlSec: Number(msg.ttlSec) || 600, limited: msg.limited }
             : null,
         );
       });

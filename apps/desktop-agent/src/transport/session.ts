@@ -91,6 +91,7 @@ export function createControllerSession(
     controller = {
       id: randomUUID(),
       visible: true,
+      lastUserIntentMs: Date.now(),
       send,
       close: (_code, reason) => channel.close(reason),
     };
@@ -211,7 +212,27 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 /** The host's own copy/paste chord modifier (⌘ on macOS, Ctrl everywhere else). */
 const copyPasteModifier = () => (platform() === "darwin" ? "meta" : "control");
 
+/**
+ * Messages that count as REAL user activity for the idle-park clock. Deliberately excludes
+ * automatic traffic (`visibility`, `ping`, `video-stats`) so a backgrounded-but-connected tab
+ * can't keep an abandoned session alive forever — only actual control input does. `still-here`
+ * is the one non-input member: a throttled human-presence signal the controller sends on local
+ * gestures, so someone WATCHING the screen (without touching the host) isn't parked as stale.
+ */
+const USER_INTENT_TYPES = new Set<ClientMessage["type"]>([
+  "pointer",
+  "scroll",
+  "key",
+  "type",
+  "clipboard-copy",
+  "clipboard-write",
+  "set-viewport",
+  "select-display",
+  "still-here",
+]);
+
 async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Controller): Promise<void> {
+  if (USER_INTENT_TYPES.has(msg.type)) ctx.noteUserIntent(controller);
   switch (msg.type) {
     case "pointer":
       if (msg.action === "move") await ctx.input.moveTo(msg.x ?? 0, msg.y ?? 0);
@@ -320,6 +341,8 @@ async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Contr
       break;
     case "hello":
     case "auth":
+    // still-here exists only to bump the idle-park clock (done above) — no host action.
+    case "still-here":
       break;
   }
 }

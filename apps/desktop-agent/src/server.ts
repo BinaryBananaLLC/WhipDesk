@@ -42,6 +42,8 @@ export interface Controller {
   id: string;
   /** Whether the controller's UI is currently visible (Page Visibility). */
   visible: boolean;
+  /** Epoch ms of the last REAL user input (not automatic traffic) — drives the idle-park timer. */
+  lastUserIntentMs: number;
   send(msg: ServerMessage): void;
   close(code?: number, reason?: string): void;
 }
@@ -69,6 +71,8 @@ export interface AgentContext {
   addController(controller: Controller): void;
   removeController(controller: Controller): void;
   setVisibility(controller: Controller, visible: boolean): void;
+  /** Mark real user input on a controller: bumps its activity clock and re-arms the idle-park timer. */
+  noteUserIntent(controller: Controller): void;
   setFps(fps: number): void;
   selectDisplay(id: number): void;
   requestFrame(): void;
@@ -473,12 +477,47 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   const updatePresence = () => presence.update(controllers.size > 0);
 
   // Nobody is actually looking (every connected controller's tab is hidden): stop the H.264
-  // encoder — no host CPU or bandwidth for frames no one sees. Region watchers and session
-  // monitors are deliberately untouched: they run on their own samplers, so auto-whip alerts
-  // keep firing with the phone in your pocket. Resuming restarts the capture (fresh IDR).
+  // encoder — no host CPU or bandwidth for frames no one sees — AND let the host display sleep &
+  // lock again. Tying the display-wake to REAL visibility (not mere connectedness) stops a hidden
+  // controller from holding the panel awake indefinitely. Region watchers and session monitors are
+  // deliberately untouched: they run on their own samplers, so auto-whip alerts keep firing with the
+  // phone in your pocket. Resuming restarts the capture (fresh IDR).
   const recomputeVideoPause = () => {
-    const anyVisible = controllers.size === 0 || [...controllers].some((c) => c.visible);
-    video?.setPaused(!anyVisible && controllers.size > 0);
+    const someVisible = [...controllers].some((c) => c.visible);
+    video?.setPaused(!someVisible && controllers.size > 0);
+    if (controllers.size > 0) displayWake.setActive(someVisible);
+  };
+
+  // Idle-input park: a controller with NO user input for `config.idleMinutes` is parked
+  // (disconnected, with a one-tap resume on the client) so an abandoned session can't hold a TURN
+  // allocation + the host display awake forever. A single re-armed pair of timers per controller:
+  // warn a few minutes out, then park. Automatic traffic (visibility/ping/video-stats) does NOT
+  // reset it — only real input, via ctx.noteUserIntent (see transport/session.ts dispatch).
+  const IDLE_PARK_MS = config.idleMinutes > 0 ? config.idleMinutes * 60_000 : 0;
+  const IDLE_WARN_LEAD_MS = Math.min(5 * 60_000, Math.floor(IDLE_PARK_MS / 2));
+  const idleTimers = new Map<Controller, { warn: ReturnType<typeof setTimeout>; park: ReturnType<typeof setTimeout> }>();
+  const clearIdle = (c: Controller) => {
+    const t = idleTimers.get(c);
+    if (!t) return;
+    clearTimeout(t.warn);
+    clearTimeout(t.park);
+    idleTimers.delete(c);
+  };
+  const armIdle = (c: Controller) => {
+    if (IDLE_PARK_MS <= 0) return; // idle-park disabled
+    clearIdle(c);
+    const secondsLeft = Math.max(1, Math.round(IDLE_WARN_LEAD_MS / 1000));
+    const warn = setTimeout(
+      () => c.send({ type: "idle-warn", secondsLeft }),
+      Math.max(0, IDLE_PARK_MS - IDLE_WARN_LEAD_MS),
+    );
+    const park = setTimeout(() => {
+      log.info("controller session parked after idle-input timeout");
+      c.send({ type: "parked", reason: "idle" });
+      // Mirror the superseded handover: let the client show its resume gate before the close lands.
+      setTimeout(() => c.close(4002, "idle-parked"), 300);
+    }, IDLE_PARK_MS);
+    idleTimers.set(c, { warn, park });
   };
 
   const ctx: AgentContext = {
@@ -522,9 +561,11 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       controller.send({ type: "watchers", regions: regionWatcher.list() });
       updatePresence();
       recomputeVideoPause();
+      armIdle(controller); // start the idle-input clock for this session
     },
     removeController(controller) {
       controllers.delete(controller);
+      clearIdle(controller);
       log.info("controller disconnected");
       // Last one out: let the display sleep & lock again for security.
       if (controllers.size === 0) displayWake.setActive(false);
@@ -547,6 +588,10 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
     setVisibility(controller, visible) {
       controller.visible = visible;
       recomputeVideoPause();
+    },
+    noteUserIntent(controller) {
+      controller.lastUserIntentMs = Date.now();
+      armIdle(controller); // real input resets the idle-park countdown
     },
     getMachineName() {
       return machineName || hostname();

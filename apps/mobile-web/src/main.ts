@@ -311,6 +311,9 @@ async function start(): Promise<void> {
     const firstWelcome = !welcomed;
     welcomed = true;
     markConnected();
+    // The host's admit() assumes the controller is visible; a hidden tab that (re)connects would
+    // otherwise stream full-rate H.264 to nobody. Correct the host's assumption immediately.
+    conn.setVisible(!document.hidden);
     connecting.hide();
     pinPrompt.hide();
     resumePrompt.hide();
@@ -340,6 +343,34 @@ async function start(): Promise<void> {
     connecting.hide();
     pinPrompt.show(req, (pin) => conn.submitPin(pin));
   });
+  // Idle-input warning from the host: the session pauses soon unless the user does something. Any
+  // real gesture already sends a pointer/etc. message, which resets the host timer — so we just
+  // nudge. In-app-only toast (no system notification) since it's transient and needs no click.
+  conn.on("idleWarn", ({ secondsLeft }) => {
+    const mins = Math.max(1, Math.round(secondsLeft / 60));
+    notifications.flash("Still there?", `Session pauses in ~${mins} min without activity — tap anywhere to stay connected.`, "warning");
+  });
+  // Host PARKED the session for inactivity. Terminal like `superseded`: close() cancels the passive
+  // auto-reconnect (which would replay the PIN and immediately reconnect), then the resume gate lets
+  // the user pick right back up (one tap — the PIN is remembered in memory).
+  conn.on("parked", () => {
+    conn.close();
+    connecting.hide();
+    pinPrompt.hide();
+    hideSharpPill();
+    resumePrompt.show(
+      () => {
+        resuming = true;
+        connecting.show("Reconnecting…");
+        conn.connect();
+      },
+      {
+        title: "Session paused \u{1F634}",
+        msg: "This session was paused after a stretch of inactivity. Your monitors, timers, and notifications kept running the whole time — tap to take back control.",
+        action: "Resume",
+      },
+    );
+  });
   // Single-session rule: a newer device took over. This must be TERMINAL — close() cancels the
   // passive auto-reconnect (which replays the remembered PIN) or the two devices would kick each
   // other in an endless loop. Taking back control simply reconnects, superseding the other side.
@@ -360,6 +391,18 @@ async function start(): Promise<void> {
         action: "Take back control",
       },
     );
+  });
+  // The edge withheld a relay for this connection (mint quota, no capacity, or a ban) — say so
+  // instead of silently connecting without one. Direct/LAN still works; a purely-remote peer behind
+  // strict NAT may not connect until the limit clears.
+  conn.on("relayLimited", ({ reason, retryAfterSec }) => {
+    const mins = retryAfterSec ? Math.max(1, Math.round(retryAfterSec / 60)) : 0;
+    const retry = mins ? ` Retries in ~${mins} min.` : "";
+    const body =
+      reason === "banned"
+        ? "Relay access is disabled for this account. Direct connections still work."
+        : `Relay limit reached — connecting without a relay. Direct connections still work.${retry}`;
+    notifications.flash("Relay limited", body, "warning");
   });
   // Live rename echo: the agent broadcasts the new display name to every connected controller.
   conn.on("machineName", (name) => controls.setDeviceName(name));
@@ -496,6 +539,22 @@ async function start(): Promise<void> {
     if (document.hidden) markHidden();
     else handleReturn();
   });
+  // Human-presence signal for the host's idle-park clock: any physical interaction with THIS UI
+  // (tap, keypress, wheel, mouse move) proves someone is at the controller, even when the gesture
+  // injects nothing into the host — the "watching an agent work hands-off" case. Throttled to one
+  // still-here a minute; a hidden or truly abandoned tab generates no gestures, so stale sessions
+  // still park on schedule.
+  let lastStillHere = 0;
+  const noteLocalPresence = () => {
+    if (document.hidden || !welcomed) return;
+    const now = Date.now();
+    if (now - lastStillHere < 60_000) return;
+    lastStillHere = now;
+    conn.send({ type: "still-here" });
+  };
+  for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"] as const) {
+    document.addEventListener(ev, noteLocalPresence, { capture: true, passive: true });
+  }
   window.addEventListener("pageshow", handleReturn);
   // Real unload (refresh/navigate-away, not a bfcache freeze): close the session gracefully so the
   // agent drops us from its viewer count immediately instead of waiting out the ICE consent

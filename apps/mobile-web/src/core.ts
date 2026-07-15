@@ -17,7 +17,7 @@ import { responseFor, stretch } from "./crypto";
 // Mirrors PROTOCOL_VERSION in packages/protocol. Kept local so version-mismatch detection works
 // even against a protocol build that predates the constant. (The tiny isServerMessage guard IS
 // imported from the package — Vite inlines it.)
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
@@ -47,6 +47,22 @@ export interface ControllerEvents {
    * close the transport (no auto-reconnect) and offer a manual "take back control" instead.
    */
   superseded: void;
+  /**
+   * Host warns the session is about to be PARKED for input inactivity (`secondsLeft` grace). Any
+   * real gesture already resets the host timer — the UI just nudges "tap to stay connected".
+   */
+  idleWarn: { secondsLeft: number };
+  /**
+   * Host PARKED the session (no user input for the idle window). Terminal like `superseded`: the UI
+   * closes the transport (kills auto-reconnect) and shows a one-tap resume gate.
+   */
+  parked: { reason: string };
+  /**
+   * The edge degraded this ICE mint to STUN-only (no relay handed out) and why — the caller's mint
+   * quota, no relay capacity, or an admin ban. Surfaced so the UI tells the user instead of the old
+   * SILENT STUN downgrade. `retryAfterSec` is advisory. Direct/LAN connections still work.
+   */
+  relayLimited: { reason: string; retryAfterSec?: number };
   /** The machine's display name changed (someone renamed it via the connection dialog). */
   machineName: string;
   pinRequired: PinRequest;
@@ -109,6 +125,9 @@ export class ControllerCore {
     notification: new Set(),
     clipboardContent: new Set(),
     superseded: new Set(),
+    idleWarn: new Set(),
+    parked: new Set(),
+    relayLimited: new Set(),
     machineName: new Set(),
     pinRequired: new Set(),
     watchers: new Set(),
@@ -227,6 +246,12 @@ export class ControllerCore {
         break;
       case "superseded":
         this.emit("superseded", undefined);
+        break;
+      case "idle-warn":
+        this.emit("idleWarn", { secondsLeft: message.secondsLeft });
+        break;
+      case "parked":
+        this.emit("parked", { reason: message.reason });
         break;
       case "machine-name":
         this.emit("machineName", message.name);

@@ -34,13 +34,14 @@ interface Harness {
   ctx: AgentContext;
   typed: string[];
   authenticatedCount: number;
+  userIntentCount: number;
 }
 
 function makeCtx(stateDir: string, withPin: boolean): Harness {
   const pin = PinGuard.load(stateDir);
   if (withPin && !pin.isSet) pin.setPin(PIN);
   const typed: string[] = [];
-  const harness: Harness = { typed, authenticatedCount: 0, ctx: null as unknown as AgentContext };
+  const harness: Harness = { typed, authenticatedCount: 0, userIntentCount: 0, ctx: null as unknown as AgentContext };
   const noop = () => {};
   const ctx = {
     config: { port: 0, token: TOKEN, fps: 10, quality: 75, maxWidth: 2048, watchRegex: "", stateDir, keepAwake: false },
@@ -68,6 +69,7 @@ function makeCtx(stateDir: string, withPin: boolean): Harness {
     addController: (c: Controller) => void (ctx as { controllers: Set<Controller> }).controllers.add(c),
     removeController: (c: Controller) => void (ctx as { controllers: Set<Controller> }).controllers.delete(c),
     setVisibility: noop,
+    noteUserIntent: () => harness.userIntentCount++,
     setFps: noop,
     selectDisplay: noop,
     requestFrame: noop,
@@ -207,4 +209,22 @@ test("messages before hello (or a non-hello first message) close the channel", (
   const session = createControllerSession(ctx, channel, { clientId: "c1" });
   session.handleText(JSON.stringify({ type: "type", text: "no handshake" }));
   assert.equal(channel.closedWith, "expected hello");
+});
+
+test("only real input and still-here reset the idle clock", async () => {
+  const harness = makeCtx(tempStateDir(), false);
+  const channel = new FakeChannel();
+  const session = createControllerSession(harness.ctx, channel, { clientId: "active-viewer" });
+  session.handleText(hello(TOKEN));
+
+  session.handleText(JSON.stringify({ type: "visibility", visible: true }));
+  session.handleText(JSON.stringify({ type: "ping", t: 1 }));
+  session.handleText(JSON.stringify({ type: "video-stats", lossPct: 0 }));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.userIntentCount, 0, "automatic traffic must not keep an abandoned session alive");
+
+  session.handleText(JSON.stringify({ type: "still-here" }));
+  session.handleText(JSON.stringify({ type: "type", text: "active" }));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.userIntentCount, 2, "human presence and real input must keep an active session alive");
 });

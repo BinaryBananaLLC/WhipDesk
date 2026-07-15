@@ -25,8 +25,12 @@ WhipDesk is a **mobile-first remote access tool** designed specifically for deve
 
 Modern AI workflows require more than traditional tools can offer:
 
-- **Beyond the Terminal:** Terminal-only apps limit you to agent chats only. WhipDesk gives you full access to your entire desktop and development environment so you can view code changes, inspect UI fixes, and run any desktop app.
+- **Beyond the Terminal:** Terminal-only apps limit you to agent chats only. WhipDesk gives you **full access to your entire desktop** and development environment so you can view code changes, inspect UI fixes, and run any desktop app.
 - **Built for Mobile & AI:** Traditional remote desktop tools are notoriously clunky on small screens with very limited support for reading text, and weren't built with AI agents in mind. WhipDesk is tailored for mobile-first control, letting you effortlessly monitor, guide, and course-correct your vibecoding sessions from anywhere.
+
+<div align="center">
+<img src="https://whipdesk.com/art/readme/info_image.png" alt="WhipDesk - full access to entire desktop" width="720" />
+</div>
 
 **Free, open-source, and end-to-end encrypted**. WhipDesk works entirely on your local network without any account—or from anywhere in the world with a free sign-in at [WhipDesk.com](https://whipdesk.com).
 

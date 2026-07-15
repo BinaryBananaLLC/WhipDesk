@@ -47,7 +47,13 @@ export async function fetchIceServers(
 
   if (edge?.isConnected()) {
     const result = await edge.requestIce();
-    if (result) return remember(result.iceServers, result.ttlSec);
+    if (result) {
+      if (result.limited) {
+        log.warn(`cloud: relay limited (${result.limited}) — this mint is STUN-only (direct/LAN still works)`);
+        return result.iceServers;
+      }
+      return remember(result.iceServers, result.ttlSec);
+    }
   }
 
   try {
@@ -55,8 +61,12 @@ export async function fetchIceServers(
     const token = await auth.getIdToken();
     const res = await fetch(`${base}/v1/ice`, { headers: { authorization: `Bearer ${token}` } });
     if (res.ok) {
-      const body = (await res.json()) as { iceServers?: IceServer[]; ttlSec?: number };
+      const body = (await res.json()) as { iceServers?: IceServer[]; ttlSec?: number; limited?: string };
       if (Array.isArray(body.iceServers) && body.iceServers.length > 0) {
+        if (body.limited) {
+          log.warn(`cloud: relay limited (${body.limited}) — this mint is STUN-only (direct/LAN still works)`);
+          return body.iceServers;
+        }
         return remember(body.iceServers, Number(body.ttlSec) || 600);
       }
     } else {
