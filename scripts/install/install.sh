@@ -52,12 +52,15 @@ if [[ -z "$VERSION" ]]; then
   say "Resolving latest release"
   final_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")"
   VERSION="${final_url##*/}"
-  # Accept both v-prefixed (v0.2.0) and bare (0.2.0) release tags — the download path uses the tag
-  # verbatim ($BASE) and asset names use the v-stripped number ($VER), so either resolves correctly.
   [[ "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+ ]] || fail "could not resolve the latest version (got '$VERSION')"
 fi
+# Normalize whichever form was supplied. Release TAGS are always v-prefixed (v1.0.0) while asset
+# names use the bare number (whipdesk-1.0.0-...), so accept `--version 1.0.0` and `--version v1.0.0`
+# alike: $VER is the bare number for asset names, $TAG is the v-prefixed tag for the download URL.
+[[ "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+ ]] || fail "invalid --version '$VERSION' (expected e.g. v1.0.0 or 1.0.0)"
 VER="${VERSION#v}"
-BASE="https://github.com/${REPO}/releases/download/${VERSION}"
+TAG="v$VER"
+BASE="https://github.com/${REPO}/releases/download/${TAG}"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

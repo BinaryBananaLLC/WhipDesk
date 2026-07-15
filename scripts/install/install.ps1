@@ -36,12 +36,15 @@ if (-not $Version) {
   $resp.AllowAutoRedirect = $false
   $location = $resp.GetResponse().Headers["Location"]
   $Version = ($location -split "/")[-1]
-  # Accept both v-prefixed (v0.2.0) and bare (0.2.0) release tags — $Base uses the tag verbatim and
-  # $Ver is the v-stripped number for asset names, so either form resolves correctly.
   if ($Version -notmatch '^v?\d+\.\d+\.\d+') { Fail "could not resolve the latest version (got '$Version')" }
 }
+# Normalize whichever form was supplied. Release TAGS are always v-prefixed (v1.0.0) while asset
+# names use the bare number (whipdesk-1.0.0-...), so accept `-Version 1.0.0` and `-Version v1.0.0`
+# alike: $Ver is the bare number for asset names, $Tag is the v-prefixed tag for the download URL.
+if ($Version -notmatch '^v?\d+\.\d+\.\d+') { Fail "invalid -Version '$Version' (expected e.g. v1.0.0 or 1.0.0)" }
 $Ver = $Version.TrimStart("v")
-$Base = "https://github.com/$Repo/releases/download/$Version"
+$Tag = "v$Ver"
+$Base = "https://github.com/$Repo/releases/download/$Tag"
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "whipdesk-install-$([System.Guid]::NewGuid().ToString('N').Substring(0,8))"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null

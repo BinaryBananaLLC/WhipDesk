@@ -46,6 +46,15 @@ function printVersion(): void {
   console.log(`whipdesk ${AGENT_VERSION}`);
 }
 
+// Accept the version/help flags in every spelling a user is likely to try — Unix short/long, a bare
+// subcommand word, the capitalized `-V`, and the Windows `/?`, `/v` style — so nobody has to guess
+// which one this particular tool wants. Matching is case-insensitive.
+const VERSION_ARGS = new Set(["-v", "--version", "version", "/v", "/version"]);
+const HELP_ARGS = new Set(["-h", "--help", "help", "-?", "?", "/?", "/h", "/help"]);
+const isVersionArg = (a: string): boolean => VERSION_ARGS.has(a.toLowerCase());
+const isHelpArg = (a: string): boolean => HELP_ARGS.has(a.toLowerCase());
+const isVerboseArg = (a: string): boolean => a.toLowerCase() === "--verbose";
+
 /** Standard `-h`/`--help`: what the agent does and the only flags it takes. */
 function printHelp(): void {
   console.log(
@@ -72,13 +81,21 @@ function printHelp(): void {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  if (args.includes("-h") || args.includes("--help")) {
+  if (args.some(isHelpArg)) {
     printHelp();
     return;
   }
-  if (args.includes("-v") || args.includes("--version")) {
+  if (args.some(isVersionArg)) {
     printVersion();
     return;
+  }
+  // `--verbose` (handled in logger.ts) is the only flag that tweaks a normal run. Anything else is a
+  // typo — surface it with a hint instead of silently starting the agent while ignoring the arg, which
+  // is exactly what makes a mistyped flag look like "the flag doesn't work".
+  const unknown = args.find((a) => !isVerboseArg(a));
+  if (unknown) {
+    console.error(`whipdesk: unknown option '${unknown}'. Run 'whipdesk --help' for usage.`);
+    process.exit(2);
   }
 
   printBanner();
