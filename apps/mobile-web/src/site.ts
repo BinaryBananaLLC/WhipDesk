@@ -9,6 +9,17 @@
  */
 const ACTIVE_LOCALES = ["en"] as const;
 const DEFAULT_LOCALE = "en";
+const PRODUCTION_SITE_URL = "https://whipdesk.com";
+const PRODUCTION_DONATE_URL = "https://donate.stripe.com/6oU5kE19N5v35652n88so01";
+
+let hostedSiteUrl = "";
+export let DONATE_URL = PRODUCTION_DONATE_URL;
+
+/** Apply optional values loaded from the hosted controller's firebase.json. LAN keeps defaults. */
+export function configureHostedSite(config: { siteUrl?: string; donateUrl?: string } | null): void {
+  hostedSiteUrl = config?.siteUrl?.replace(/\/$/, "") ?? "";
+  DONATE_URL = config?.donateUrl ?? PRODUCTION_DONATE_URL;
+}
 
 /** Best guess at the user's site locale (stored choice → browser language → English). */
 export function siteLocale(): string {
@@ -28,7 +39,8 @@ export function siteLocale(): string {
 
 /** Empty (relative) when already on whipdesk.com; the production origin otherwise. */
 function siteBase(): string {
-  return location.hostname.endsWith("whipdesk.com") ? "" : "https://whipdesk.com";
+  if (hostedSiteUrl) return location.origin === hostedSiteUrl ? "" : hostedSiteUrl;
+  return location.hostname.endsWith("whipdesk.com") ? "" : PRODUCTION_SITE_URL;
 }
 
 /** English pages live un-prefixed (`/dashboard/`); other locales get a `/xx/` prefix. */
@@ -47,12 +59,6 @@ export function signInUrl(next?: string): string {
   const q = next ? `?next=${encodeURIComponent(next)}` : "";
   return `${siteBase()}${localePrefix()}/sign-in/${q}`;
 }
-
-/**
- * Live Stripe donation link. TURN relay traffic costs real money; the connection dialog invites
- * support here. Keep in sync with the marketing site's src/lib/links.ts.
- */
-export const DONATE_URL = "https://donate.stripe.com/6oU5kE19N5v35652n88so01";
 
 // Where users report issues / share ideas. Kept in sync with the marketing site's src/lib/links.ts.
 export const GITHUB_URL = "https://github.com/BinaryBananaLLC/WhipDesk/";

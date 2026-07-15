@@ -16,6 +16,10 @@ export interface FirebaseWebConfig {
   edgeUrl?: string;
   /** Override the ICE-servers endpoint; defaults to `${edgeUrl}/v1/ice`. */
   iceUrl?: string;
+  /** Hosted site origin for dashboard/sign-in navigation. */
+  siteUrl?: string;
+  /** Hosted donation link. */
+  donateUrl?: string;
 }
 
 const DEFAULT_EDGE_URL = "https://edge.whipdesk.com";

@@ -23,6 +23,10 @@ export interface CloudConfig {
   messagingSenderId?: string;
   /** WhipDesk edge (Cloudflare Worker) — presence, signaling, and ICE minting. */
   edgeUrl?: string;
+  /** Site origin used by the email-link handoff page. */
+  siteUrl?: string;
+  /** Agent version endpoint. Self-hosted/staging backends should override the production default. */
+  versionUrl?: string;
 }
 
 /**

@@ -35,12 +35,16 @@ talks to whipdesk.com:
   "apiKey": "…your Firebase web apiKey…",
   "projectId": "your-project",
   "appId": "1:…:web:…",
-  "edgeUrl": "https://edge.example.com"
+  "edgeUrl": "https://edge.example.com",
+  "siteUrl": "https://whipdesk.example.com",
+  "versionUrl": "https://edge.example.com/v1/version"
 }
 ```
 
-(`authDomain` defaults to `<projectId>.firebaseapp.com`. There are deliberately no env vars and no
-configuration flags — `.whipdesk/*.json` is the whole override story. The agent's only CLI flags are
+(`authDomain` defaults to `<projectId>.firebaseapp.com`. `siteUrl` keeps the agent's email-link handoff on your site, while
+`versionUrl` keeps its daily update check on your edge; omit either to use the hosted WhipDesk
+default. There are deliberately no env vars or configuration flags — `.whipdesk/*.json` is the
+whole override story. The agent's only CLI flags are
 `--help`, `--version`, and `--verbose`, none of which configure anything. The one other file is
 `.whipdesk/settings.json`, which currently holds just `{ "updateCheck": false }`. Resolution:
 [`apps/desktop-agent/src/cloud/config.ts`](../apps/desktop-agent/src/cloud/config.ts).)

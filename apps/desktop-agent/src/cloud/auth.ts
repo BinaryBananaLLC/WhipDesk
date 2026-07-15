@@ -146,7 +146,8 @@ export async function ensureAgentAuth(
     return null;
   }
 
-  const continueUrl = "https://whipdesk.com/agent-auth/";
+  const siteUrl = (config.siteUrl ?? "https://whipdesk.com").replace(/\/$/, "");
+  const continueUrl = `${siteUrl}/agent-auth/`;
   try {
     await postJson(`https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`, {
       requestType: "EMAIL_SIGNIN",

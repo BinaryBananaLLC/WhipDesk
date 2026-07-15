@@ -1,5 +1,5 @@
 import { log } from "../logger";
-import { loadAgentSettings } from "../cloud/config";
+import { loadAgentSettings, loadCloudConfig } from "../cloud/config";
 
 /**
  * Best-effort update check against whipdesk.com/api/version (a Cloudflare Worker fronting the
@@ -14,14 +14,14 @@ import { loadAgentSettings } from "../cloud/config";
  * a long-running agent about a new release). Never throws, never blocks startup.
  */
 
-const VERSION_URL = "https://whipdesk.com/api/version";
+const DEFAULT_VERSION_URL = "https://whipdesk.com/api/version";
 const RECHECK_MS = 24 * 3600_000;
 
-export async function checkForUpdate(current: string): Promise<string | null> {
+export async function checkForUpdate(current: string, versionUrl = DEFAULT_VERSION_URL): Promise<string | null> {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 4000);
-    const res = await fetch(VERSION_URL, {
+    const res = await fetch(versionUrl, {
       headers: {
         accept: "application/json",
         "user-agent": `whipdesk/${current}`,
@@ -56,9 +56,10 @@ export function startUpdateChecks(
     log.info("update check: disabled via .whipdesk/settings.json");
     return { stop() {} };
   }
+  const versionUrl = loadCloudConfig(stateDir).versionUrl ?? DEFAULT_VERSION_URL;
   const announced = new Set<string>();
   const run = () =>
-    void checkForUpdate(current).then((latest) => {
+    void checkForUpdate(current, versionUrl).then((latest) => {
       if (latest && !announced.has(latest)) {
         announced.add(latest);
         announceUpdate(latest, current, notify);

@@ -13,7 +13,7 @@ import { RemoteConnection, type FirebaseWebConfig } from "./remote";
 import { ScreenView } from "./screen";
 import { RegionWatchers } from "./watchers";
 import { Whipository } from "./whipository";
-import { dashboardUrl } from "./site";
+import { configureHostedSite, dashboardUrl } from "./site";
 import "./styles.css";
 
 interface HashParams {
@@ -93,6 +93,7 @@ async function makeTransport(remoteConfig: FirebaseWebConfig | null): Promise<Co
 
 async function start(): Promise<void> {
   const remoteConfig = remote && device ? await loadFirebaseConfig() : null;
+  configureHostedSite(remoteConfig);
   const conn = await makeTransport(remoteConfig);
   const input = new InputController(canvas, view, conn);
   // Notification permission is requested on a clear gesture (creating the first alert/timer), not
