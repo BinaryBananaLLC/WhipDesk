@@ -426,6 +426,50 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Interact → Shortcuts row: six buttons (Copy, Paste, Select all, Undo, Redo, Save). Six full-size
+   buttons cannot share one line on a phone the way Mouse's five can — a nowrap row would either
+   ellipsis every label down to nothing or, once the buttons hit their min-content width, overflow
+   past both edges of the centered row and get clipped there (unreachable, not just ugly). So this
+   is an equal-column grid instead: 3+3 on phones, six-across once the ribbon is genuinely wide
+   enough for the labels. Columns are minmax(0,1fr), so a long label ellipses inside its own cell
+   and can never push the grid wider than the panel. */
+.wd-group-items.wd-shortcut-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+.wd-group-items.wd-shortcut-grid .wd-btn {
+  min-width: 0;
+  gap: 6px;
+  padding: 8px 6px;
+}
+.wd-group-items.wd-shortcut-grid .wd-btn .wd-btn-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* One row of six only where every label still fits whole (tablet landscape and the desktop
+   ribbon) — below this, 3+3 reads better than six squeezed, half-labelled buttons. */
+@media (min-width: 680px) {
+  .wd-group-items.wd-shortcut-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+@media (max-width: 389px) {
+  .wd-group-items.wd-shortcut-grid {
+    gap: 4px;
+  }
+  .wd-group-items.wd-shortcut-grid .wd-btn {
+    gap: 4px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+  .wd-group-items.wd-shortcut-grid .wd-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+}
 /* Narrow phones (iPhone SE / mini, ~320–389px): the five Interact buttons are roomy by default
    (Pixel 7 and up keep that look), but on a small screen they'd overflow and get clipped at the
    edges. Shed only the extra gap/padding + a hair of icon size here so all five snap back into one

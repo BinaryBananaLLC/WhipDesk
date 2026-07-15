@@ -36,6 +36,7 @@ const SHORTCUTS = [
   { id: "paste", label: "Paste" },
   { id: "undo", label: "Undo" },
   { id: "redo", label: "Redo" },
+  { id: "save", label: "Save" },
 ] as const;
 
 /** The host's primary shortcut modifier: ⌘ on a macOS host, Ctrl everywhere else. */
@@ -56,6 +57,8 @@ function shortcutStep(id: string, platform: string): LashStep {
       return { kind: "key", key: "v", modifiers: [mod] };
     case "undo":
       return { kind: "key", key: "z", modifiers: [mod] };
+    case "save":
+      return { kind: "key", key: "s", modifiers: [mod] };
     case "redo":
       return platform === "win32"
         ? { kind: "key", key: "y", modifiers: ["control"] }

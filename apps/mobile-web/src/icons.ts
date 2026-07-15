@@ -30,6 +30,7 @@ export type IconName =
   | "select-all"
   | "undo"
   | "redo"
+  | "save"
   | "drag"
   | "send"
   | "insert"
@@ -92,6 +93,10 @@ const PATHS: Record<IconName, string> = {
   // Curved arrows sweeping back/forward = undo/redo on the host.
   undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/>',
   redo: '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 15-6.7L21 13"/>',
+  // Floppy disk (shutter above, label below) = save in the host's focused app.
+  save:
+    '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/>' +
+    '<path d="M17 21v-8H7v8"/><path d="M7 3v5h7"/>',
   drag: '<path d="M12 2v20M2 12h20" /><path d="m8 6 4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>',
   send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4Z"/>',
   // Arrow dropping down into an open text field — reads as "insert this into the box you're typing in".

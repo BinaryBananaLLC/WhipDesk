@@ -160,8 +160,8 @@ function transportLabel(t: string): string {
  *  - Type:     write text — textarea + special keys + Insert (no Enter) / Send (Enter).
  *  - Interact: full control — Mouse|Touch|Shortcuts segment. Mouse: Left, Left-held (latched
  *    button-down for dragging/resizing host windows), Right, Double, Drag. Shortcuts: Copy (host
- *    selection → this device), Paste (this device → host), Select all, Undo, Redo — with
- *    Ctrl/⌘ C/V/A/Z forwarded on desktop controllers (see onGlobalKey/onGlobalPaste).
+ *    selection → this device), Paste (this device → host), Select all, Undo, Redo, Save — with
+ *    Ctrl/⌘ C/V/A/Z/S forwarded on desktop controllers (see onGlobalKey/onGlobalPaste).
  *  - Monitor:  pick which display to view + control.
  *
  * A chevron collapses the whole ribbon to a slim handle to free the screen.
@@ -743,16 +743,12 @@ export class Controls {
       };
       items.append(left, holdLeft, right, dbl, dragHold);
     } else if (this.interactMode === "shortcuts") {
-      items.classList.add("wd-compact-row");
-      const copy = iconBtn("copy", "Copy");
-      copy.title = "Copy the text selected on the host to this device";
-      copy.onclick = () => this.copyFromHost();
-      copy.disabled = !this.clipboardCap || this.copyPending;
-      this.copyBtn = copy;
-      const paste = iconBtn("paste", "Paste");
-      paste.title = "Paste this device's clipboard into the host's focused app";
-      paste.onclick = () => this.pasteToHost();
-      paste.disabled = !this.clipboardCap;
+      // Six buttons don't fit one phone-width line, so this grid folds them 3+3 and goes six-across
+      // only where there's real room (see .wd-shortcut-grid) — clipboard trio, then edit/file trio.
+      items.classList.add("wd-shortcut-grid");
+      const save = iconBtn("save", "Save");
+      save.title = "Save in the host's focused app";
+      save.onclick = () => this.saveOnHost();
       const selectAll = iconBtn("select-all", "Select all");
       selectAll.title = "Select all in the host's focused app";
       selectAll.onclick = () => this.selectAllOnHost();
@@ -762,7 +758,16 @@ export class Controls {
       const redo = iconBtn("redo", "Redo");
       redo.title = "Redo in the host's focused app";
       redo.onclick = () => this.undoRedoOnHost(true);
-      items.append(copy, paste, selectAll, undo, redo);
+      const copy = iconBtn("copy", "Copy");
+      copy.title = "Copy the text selected on the host to this device";
+      copy.onclick = () => this.copyFromHost();
+      copy.disabled = !this.clipboardCap || this.copyPending;
+      this.copyBtn = copy;
+      const paste = iconBtn("paste", "Paste");
+      paste.title = "Paste this device's clipboard into the host's focused app";
+      paste.onclick = () => this.pasteToHost();
+      paste.disabled = !this.clipboardCap;
+      items.append(save, selectAll, undo, redo, copy, paste);
     } else {
       const tap = iconBtn("pointer", "Tap");
       tap.onclick = () => input.click("left");
@@ -924,6 +929,12 @@ export class Controls {
     navigator.vibrate?.(15);
   }
 
+  /** Save in the host's focused app (⌘S on a macOS host, Ctrl+S elsewhere). */
+  private saveOnHost(): void {
+    this.deps.conn.send({ type: "key", key: "s", modifiers: [this.hostModifier()] });
+    navigator.vibrate?.(15);
+  }
+
   /** Undo/redo in the host's focused app, with the platform-true redo chord:
    *  ⇧⌘Z on macOS, Ctrl+Y on Windows, Ctrl+Shift+Z elsewhere. */
   private undoRedoOnHost(redo: boolean): void {
@@ -1082,10 +1093,10 @@ export class Controls {
 
   /**
    * Desktop-to-desktop shortcuts: Ctrl/⌘+C copies the HOST's selection, Ctrl/⌘+A selects all
-   * there, Ctrl/⌘+Z / ⇧⌘Z / Ctrl+Y undo/redo there. Never intercepted while typing in a local
-   * field, and a local on-page selection keeps native copy so dialog/notification text stays
-   * copyable. (Ctrl/⌘+V arrives via onGlobalPaste — the paste EVENT hands us the clipboard text
-   * without any permission prompt.)
+   * there, Ctrl/⌘+S saves there, Ctrl/⌘+Z / ⇧⌘Z / Ctrl+Y undo/redo there. Never intercepted while
+   * typing in a local field, and a local on-page selection keeps native copy so dialog/notification
+   * text stays copyable. (Ctrl/⌘+V arrives via onGlobalPaste — the paste EVENT hands us the
+   * clipboard text without any permission prompt.)
    */
   private onGlobalKey(e: KeyboardEvent): void {
     if (e.defaultPrevented || !(e.metaKey || e.ctrlKey) || e.altKey) return;
@@ -1105,6 +1116,10 @@ export class Controls {
     } else if (key === "a") {
       e.preventDefault();
       this.selectAllOnHost();
+    } else if (key === "s") {
+      // Also stops the browser's own "save this page" dialog from opening over the session.
+      e.preventDefault();
+      this.saveOnHost();
     } else if (key === "y") {
       e.preventDefault();
       this.undoRedoOnHost(true);
