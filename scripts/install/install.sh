@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # WhipDesk installer for macOS + Linux. Served at https://whipdesk.com/install.sh
-# (canonical source: scripts/install/install.sh in the open-source repo — audit it there).
+# (canonical source: scripts/install/install.sh in the open-source repo - audit it there).
 #
 #   curl -fsSL https://whipdesk.com/install.sh | bash
 #   curl -fsSL https://whipdesk.com/install.sh | bash -s -- --method npm
 #   curl -fsSL https://whipdesk.com/install.sh | bash -s -- --version v0.1.4
 #
 # What it does (and nothing else):
-#   macOS  — Homebrew cask when brew is present (tracks updates), otherwise the signed +
+#   macOS  - Homebrew cask when brew is present (tracks updates), otherwise the signed +
 #            notarized .pkg from GitHub Releases (checksum-verified, needs sudo for installer).
-#   Linux  — the .tar.gz from GitHub Releases (checksum-verified) into ~/.local/share/whipdesk
+#   Linux  - the .tar.gz from GitHub Releases (checksum-verified) into ~/.local/share/whipdesk
 #            with a symlink at ~/.local/bin/whipdesk. No sudo.
-#   --method npm — `npm install -g whipdesk` instead (needs Node >= 20).
+#   --method npm - `npm install -g whipdesk` instead (needs Node >= 20).
 #
 # Every downloaded artifact is verified against the release's SHA256SUMS.txt. All artifacts are
-# built by GitHub Actions from the tagged source with SLSA provenance — see
+# built by GitHub Actions from the tagged source with SLSA provenance - see
 # https://github.com/BinaryBananaLLC/WhipDesk/blob/main/docs/VERIFYING-DOWNLOADS.md
 set -euo pipefail
 
@@ -37,6 +37,30 @@ done
 say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Remove a WhipDesk installed by npm -g so it can't shadow a brew/pkg/tar install on PATH (and so
+# its own updater stops nagging). Only called from the non-npm installers, so we never remove the
+# copy we just placed. Best-effort - a failure here must not fail the install.
+remove_conflicting_installs() {
+  if command -v npm >/dev/null 2>&1; then
+    local npm_bin
+    npm_bin="$(npm prefix -g 2>/dev/null)/bin/whipdesk"
+    if [[ -e "$npm_bin" ]]; then
+      say "Removing old npm global install of WhipDesk"
+      npm rm -g whipdesk >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+# After install, warn if some OTHER whipdesk still resolves first on PATH (e.g. an old copy we can't
+# safely remove). $1 is the path we just installed.
+warn_if_shadowed() {
+  hash -r 2>/dev/null || true
+  local found; found="$(command -v whipdesk 2>/dev/null || true)"
+  if [[ -n "$found" && "$found" != "$1" ]]; then
+    printf '\n\033[1;33mNOTE:\033[0m another "whipdesk" is ahead on your PATH and may shadow this install:\n  %s\nRemove it (or adjust PATH so %s wins), then reopen your terminal.\n' "$found" "$1" >&2
+  fi
+}
+
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -47,7 +71,7 @@ esac
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
-# Resolve the version from the /releases/latest redirect — no API, no rate limits.
+# Resolve the version from the /releases/latest redirect - no API, no rate limits.
 if [[ -z "$VERSION" ]]; then
   say "Resolving latest release"
   final_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")"
@@ -77,7 +101,7 @@ verify_checksum() { # file expected-name
   else
     actual="$(shasum -a 256 "$1" | awk '{print $1}')"
   fi
-  [[ "$actual" == "$expected" ]] || fail "checksum mismatch for $2 — refusing to install"
+  [[ "$actual" == "$expected" ]] || fail "checksum mismatch for $2 - refusing to install"
 }
 
 install_npm() {
@@ -90,6 +114,7 @@ install_npm() {
 install_brew() {
   say "Installing via Homebrew cask (brew install --cask ${REPO%/*}/whipdesk/whipdesk)"
   brew install --cask "BinaryBananaLLC/whipdesk/whipdesk"
+  remove_conflicting_installs
   say "Done. Run: whipdesk"
 }
 
@@ -100,6 +125,7 @@ install_pkg() {
   verify_checksum "$tmp/$asset" "$asset"
   say "Installing (sudo required by macOS installer)"
   sudo installer -pkg "$tmp/$asset" -target /
+  remove_conflicting_installs
   say "Done. Run: whipdesk"
 }
 
@@ -115,11 +141,13 @@ install_tar() {
   rm -rf "$share/whipdesk"
   tar -C "$share" -xzf "$tmp/$asset"
   ln -sf "$share/whipdesk/whipdesk" "$bin/whipdesk"
+  remove_conflicting_installs
   say "Done. Run: whipdesk"
   case ":$PATH:" in
     *":$bin:"*) ;;
     *) printf '\nNOTE: %s is not on your PATH. Add this to your shell profile:\n  export PATH="%s:$PATH"\n' "$bin" "$bin" ;;
   esac
+  warn_if_shadowed "$bin/whipdesk"
 }
 
 case "$METHOD" in

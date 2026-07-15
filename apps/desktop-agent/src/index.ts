@@ -51,28 +51,105 @@ function printVersion(): void {
 // which one this particular tool wants. Matching is case-insensitive.
 const VERSION_ARGS = new Set(["-v", "--version", "version", "/v", "/version"]);
 const HELP_ARGS = new Set(["-h", "--help", "help", "-?", "?", "/?", "/h", "/help"]);
+// `update`/`uninstall` follow the subcommand-word convention (brew/npm/rustup) rather than single
+// letters: `-u` and `-d` collide with too many other tools' meanings. Both just PRINT the exact
+// commands — a running whipdesk.exe can't reliably replace or delete itself (the OS locks it), so
+// re-running the installer / deleting the install dir from a normal shell is the reliable path.
+const UPDATE_ARGS = new Set(["--update", "update", "--upgrade", "upgrade", "/update"]);
+const UNINSTALL_ARGS = new Set(["--uninstall", "uninstall", "--remove", "remove", "/uninstall"]);
 const isVersionArg = (a: string): boolean => VERSION_ARGS.has(a.toLowerCase());
 const isHelpArg = (a: string): boolean => HELP_ARGS.has(a.toLowerCase());
+const isUpdateArg = (a: string): boolean => UPDATE_ARGS.has(a.toLowerCase());
+const isUninstallArg = (a: string): boolean => UNINSTALL_ARGS.has(a.toLowerCase());
 const isVerboseArg = (a: string): boolean => a.toLowerCase() === "--verbose";
 
-/** Standard `-h`/`--help`: what the agent does and the only flags it takes. */
+/** The one-liner that re-installs (= updates) WhipDesk on the current OS. The installer replaces any
+ *  older copy in place and repoints PATH, so "update" is just "run the installer again". */
+function updateCommand(): string {
+  return platform() === "win32"
+    ? 'powershell -c "irm https://whipdesk.com/install.ps1 | iex"'
+    : "curl -fsSL https://whipdesk.com/install.sh | bash";
+}
+
+/** Exact remove steps for the current OS. Uninstall is a CLEAN removal - it deletes the program AND
+ *  the ~/.whipdesk state (pairing PIN, cloud sign-in, settings). This is the opposite of `update`,
+ *  which deliberately leaves ~/.whipdesk in place. The state deletion is its own line only because it
+ *  lives in a different location, not because it's optional. */
+function uninstallSteps(): string[] {
+  if (platform() === "win32") {
+    return [
+      '  Remove-Item -Recurse -Force "$env:LOCALAPPDATA\\Programs\\WhipDesk"   (the program; a leftover PATH entry is harmless)',
+      '  Remove-Item -Recurse -Force "$env:USERPROFILE\\.whipdesk"            (settings, pairing PIN, cloud sign-in)',
+    ];
+  }
+  if (platform() === "darwin") {
+    return [
+      "  brew uninstall --cask whipdesk                              (if you installed with Homebrew)",
+      "  sudo rm -rf /usr/local/whipdesk /usr/local/bin/whipdesk     (if you installed the .pkg)",
+      "  rm -rf ~/.whipdesk                                          (settings, pairing PIN, cloud sign-in)",
+    ];
+  }
+  return [
+    "  rm -rf ~/.local/share/whipdesk ~/.local/bin/whipdesk        (the program)",
+    "  rm -rf ~/.whipdesk                                          (settings, pairing PIN, cloud sign-in)",
+  ];
+}
+
+function updateHelpLines(): string[] {
+  return [
+    "Updating:",
+    "  Re-run the installer - it replaces any older copy in place and keeps your settings:",
+    `    ${updateCommand()}`,
+    "  Installed with Homebrew or npm? Use 'brew upgrade --cask whipdesk' or 'npm update -g whipdesk'.",
+  ];
+}
+
+function uninstallHelpLines(): string[] {
+  return [
+    "Uninstalling:",
+    ...uninstallSteps(),
+    "  Installed with npm? Run: npm rm -g whipdesk",
+  ];
+}
+
+/** `update` / `--update`: show how to upgrade to the latest version (we don't self-update - see note
+ *  at UPDATE_ARGS). */
+function printUpdateInfo(): void {
+  console.log(updateHelpLines().join("\n"));
+}
+
+/** `uninstall` / `--uninstall`: show how to remove WhipDesk (we don't self-delete - see note at
+ *  UPDATE_ARGS). */
+function printUninstallInfo(): void {
+  console.log(uninstallHelpLines().join("\n"));
+}
+
+/** Standard `-h`/`--help`: what the agent does, the flags it takes, and how to update/remove it. */
 function printHelp(): void {
   console.log(
     [
-      `WhipDesk ${AGENT_VERSION} — remote desktop for checking on your machines and the AI agents running on them.`,
+      `WhipDesk ${AGENT_VERSION} - remote desktop for checking on your machines and the AI agents running on them.`,
       "",
       "Usage:",
       "  whipdesk [options]",
       "",
       "Run with no options to start the agent. It prints a QR code and a LAN URL you open on your",
       "phone or another device to connect; making the machine reachable from outside the LAN is an",
-      "opt-in prompt at startup. Configuration lives in .whipdesk/*.json next to the agent — there",
-      "are no config flags.",
+      "opt-in prompt at startup. Your settings, pairing PIN and cloud sign-in live in a .whipdesk",
+      "folder in your home directory and are kept across updates - there are no config flags.",
       "",
       "Options:",
       "  -h, --help       Show this help and exit.",
       "  -v, --version    Show the version and exit.",
       "      --verbose    Print detailed capture / network / ffmpeg logs (useful for bug reports).",
+      "",
+      "Commands:",
+      "  update           Show how to update WhipDesk to the latest version.",
+      "  uninstall        Show how to remove WhipDesk from this machine.",
+      "",
+      ...updateHelpLines(),
+      "",
+      ...uninstallHelpLines(),
       "",
       "Docs: https://whipdesk.com",
     ].join("\n"),
@@ -87,6 +164,14 @@ async function main(): Promise<void> {
   }
   if (args.some(isVersionArg)) {
     printVersion();
+    return;
+  }
+  if (args.some(isUpdateArg)) {
+    printUpdateInfo();
+    return;
+  }
+  if (args.some(isUninstallArg)) {
+    printUninstallInfo();
     return;
   }
   // `--verbose` (handled in logger.ts) is the only flag that tweaks a normal run. Anything else is a
