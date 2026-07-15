@@ -26,9 +26,9 @@ your **own** backend is in the open, though — read on.
 
 ## Bring your own backend
 
-The agent's only override surface is `.whipdesk/firebase.json` (gitignored, next to the agent's
-state). Drop in your own Firebase **web** config and your own edge URL and the agent never talks
-to whipdesk.com:
+The agent's only *backend* override surface is `.whipdesk/firebase.json` (gitignored, next to the
+agent's state). Drop in your own Firebase **web** config and your own edge URL and the agent never
+talks to whipdesk.com:
 
 ```json
 {
@@ -39,8 +39,10 @@ to whipdesk.com:
 }
 ```
 
-(`authDomain` defaults to `<projectId>.firebaseapp.com`. There are deliberately no env vars and
-no CLI flags — this file is the whole override story. Resolution:
+(`authDomain` defaults to `<projectId>.firebaseapp.com`. There are deliberately no env vars and no
+configuration flags — `.whipdesk/*.json` is the whole override story. The agent's only CLI flags are
+`--help`, `--version`, and `--verbose`, none of which configure anything. The one other file is
+`.whipdesk/settings.json`, which currently holds just `{ "updateCheck": false }`. Resolution:
 [`apps/desktop-agent/src/cloud/config.ts`](../apps/desktop-agent/src/cloud/config.ts).)
 
 Your backend needs two things:
