@@ -41,7 +41,46 @@ async function resolveCloudOptIn(): Promise<boolean> {
   return answer === "y" || answer === "yes";
 }
 
+/** Standard `-v`/`--version`: print just the version so scripts can parse it. */
+function printVersion(): void {
+  console.log(`whipdesk ${AGENT_VERSION}`);
+}
+
+/** Standard `-h`/`--help`: what the agent does and the only flags it takes. */
+function printHelp(): void {
+  console.log(
+    [
+      `WhipDesk ${AGENT_VERSION} — remote desktop for checking on your machines and the AI agents running on them.`,
+      "",
+      "Usage:",
+      "  whipdesk [options]",
+      "",
+      "Run with no options to start the agent. It prints a QR code and a LAN URL you open on your",
+      "phone or another device to connect; making the machine reachable from outside the LAN is an",
+      "opt-in prompt at startup. Configuration lives in .whipdesk/*.json next to the agent — there",
+      "are no config flags.",
+      "",
+      "Options:",
+      "  -h, --help       Show this help and exit.",
+      "  -v, --version    Show the version and exit.",
+      "      --verbose    Print detailed capture / network / ffmpeg logs (useful for bug reports).",
+      "",
+      "Docs: https://whipdesk.com",
+    ].join("\n"),
+  );
+}
+
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  if (args.includes("-h") || args.includes("--help")) {
+    printHelp();
+    return;
+  }
+  if (args.includes("-v") || args.includes("--version")) {
+    printVersion();
+    return;
+  }
+
   printBanner();
   const { config, presence, keepAwake, ctx } = await startAgent();
   printConnectInfo(config.port, config.token);

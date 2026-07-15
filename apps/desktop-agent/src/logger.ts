@@ -1,8 +1,9 @@
 const ts = () => new Date().toISOString().slice(11, 19);
 
-// `--verbose`/`-v` surfaces internal capture/restart/ffmpeg chatter that is just noise during
-// normal use. `log.debug` is silent unless it's on.
-export const verbose = process.argv.includes("--verbose") || process.argv.includes("-v");
+// `--verbose` surfaces internal capture/restart/ffmpeg chatter that is just noise during normal
+// use. `log.debug` is silent unless it's on. (`-v` is reserved for --version, so it's long-form
+// only here.)
+export const verbose = process.argv.includes("--verbose");
 
 // While an interactive terminal prompt owns the current line (startup sign-in "[y/N]:" etc.), an
 // async log line — the update check, the HDR heads-up, a cloud reconnect — would print straight
