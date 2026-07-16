@@ -46,8 +46,21 @@ talks to whipdesk.com:
 default. There are deliberately no env vars or configuration flags — `.whipdesk/*.json` is the
 whole override story. The agent's only CLI flags are
 `--help`, `--version`, and `--verbose`, none of which configure anything. The one other file is
-`.whipdesk/settings.json`, which currently holds just `{ "updateCheck": false }`. Resolution:
+`.whipdesk/settings.json`, holding `updateCheck`, `idleMinutes`, and `port`. Resolution:
 [`apps/desktop-agent/src/cloud/config.ts`](../apps/desktop-agent/src/cloud/config.ts).)
+
+### Running a second agent alongside an installed one
+
+An installed agent keeps its state in `~/.whipdesk`, while a source checkout uses the repo's own
+`.whipdesk/` — so tokens, PINs, and cloud sign-ins are already separate. The two do collide on the
+listen port, which defaults to `8787`. Because that port is also the controller's browser origin,
+sharing it means both agents share one `localhost:8787` localStorage/sessionStorage — cached
+ICE/TURN credentials, the whipository, and prompt history bleed across backends. Give the second
+agent its own port:
+
+```json
+{ "port": 8788 }
+```
 
 Your backend needs two things:
 

@@ -91,8 +91,14 @@ export function loadConfig(): AgentConfig {
     typeof settings.idleMinutes === "number" && Number.isFinite(settings.idleMinutes) && settings.idleMinutes >= 0
       ? Math.floor(settings.idleMinutes)
       : 60;
+  // Unprivileged ports only; anything out of range or non-integer falls back to the default rather
+  // than failing to bind.
+  const port =
+    typeof settings.port === "number" && Number.isInteger(settings.port) && settings.port >= 1024 && settings.port <= 65535
+      ? settings.port
+      : DEFAULTS.PORT;
   return {
-    port: DEFAULTS.PORT,
+    port,
     token: loadOrCreateToken(),
     fps: DEFAULTS.FPS,
     quality: DEFAULTS.JPEG_QUALITY,

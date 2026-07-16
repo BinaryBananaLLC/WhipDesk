@@ -90,10 +90,17 @@ export function loadCloudConfig(stateDir: string): CloudConfig {
  *   { "updateCheck": false }   — disable the daily version check against whipdesk.com/api/version
  *   { "idleMinutes": 60 }      — minutes of NO user input before a controller session is parked
  *                                (disconnected with a one-tap resume); 0 disables. Default 60.
+ *   { "port": 8788 }           — HTTP/WebSocket listen port. Default 8787 (DEFAULTS.PORT). Set this
+ *                                when a second agent (e.g. a source checkout pointed at staging via
+ *                                firebase.json) must coexist with an installed one: the port is also
+ *                                the controller's browser ORIGIN, so a distinct port is what keeps
+ *                                localStorage/sessionStorage — cached ICE/TURN credentials, the
+ *                                whipository, prompt history — from being shared between the two.
  */
 export interface AgentSettings {
   updateCheck?: boolean;
   idleMinutes?: number;
+  port?: number;
 }
 
 export function loadAgentSettings(stateDir: string): AgentSettings {
