@@ -32,6 +32,9 @@ export type IconName =
   | "redo"
   | "save"
   | "drag"
+  | "open-link"
+  | "apps"
+  | "window-cycle"
   | "send"
   | "insert"
   | "lock"
@@ -98,6 +101,18 @@ const PATHS: Record<IconName, string> = {
     '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/>' +
     '<path d="M17 21v-8H7v8"/><path d="M7 3v5h7"/>',
   drag: '<path d="M12 2v20M2 12h20" /><path d="m8 6 4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>',
+  // Box with an arrow escaping the corner = open the link under the cursor (modifier-click).
+  "open-link":
+    '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
+    '<path d="M15 3h6v6"/><path d="M10 14 21 3"/>',
+  // Four app tiles = the app switcher (⌘-Tab / Alt+Tab held open).
+  apps:
+    '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>' +
+    '<rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  // A window in front of another = cycle the windows of the same app (⌘+`).
+  "window-cycle":
+    '<rect x="3" y="9" width="14" height="12" rx="2"/>' +
+    '<path d="M8 5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/>',
   send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4Z"/>',
   // Arrow dropping down into an open text field — reads as "insert this into the box you're typing in".
   insert: '<path d="M12 3v8m-3.5-3.5L12 11l3.5-3.5"/><path d="M5 14v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/>',

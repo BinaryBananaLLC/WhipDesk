@@ -33,11 +33,18 @@ export interface InputBackend {
   moveTo(nx: number, ny: number): Promise<void>;
   buttonDown(button: MouseButton, nx?: number, ny?: number): Promise<void>;
   buttonUp(button: MouseButton): Promise<void>;
-  click(button: MouseButton, double: boolean, nx?: number, ny?: number): Promise<void>;
+  /** `modifiers` (e.g. ["control"], ["meta"]) are held for the duration of the click. */
+  click(button: MouseButton, double: boolean, nx?: number, ny?: number, modifiers?: string[]): Promise<void>;
   scroll(dx: number, dy: number): Promise<void>;
 
   typeText(text: string, submit?: boolean): Promise<void>;
   keyTap(key: string, modifiers?: string[]): Promise<void>;
+  /**
+   * Press (`down: true`) or release a single key and LEAVE it that way — used to hold the
+   * app-switcher's ⌘/Alt across several Tab taps. The caller owns releasing it (the session
+   * releases any still-held key when the controller disconnects).
+   */
+  keyHold(key: string, down: boolean): Promise<void>;
 }
 
 export function clamp01(n: number): number {

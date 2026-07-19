@@ -9,7 +9,7 @@ import type { ScreenView } from "./screen";
  *    double/triple clicks. With the Pan tool or drag-to-scroll on, one finger pans/scrolls
  *    instead and taps are inert. Two fingers: pinch to zoom, drag to pan/scroll.
  *  - "mouse": trackpad-style. Tap = click where you touch; drag = move the pointer; the
- *    Right/Double/Drag-hold buttons and long-press = right click cover the rest.
+ *    Right/Double/Link buttons and long-press = right click cover the rest.
  *  - "touch": touchscreen simulation. Tap = tap (click) where you touch; swipe = scroll.
  *    No right click — it mimics a finger on a touch screen.
  */
@@ -51,16 +51,14 @@ export interface InputCallbacks {
  */
 export class InputController {
   private interaction: Interaction = "viewer";
-  private dragLock = false; // hold the left button during drags (mouse mode)
   private dragScroll = false; // one-finger drag scrolls instead of moving the pointer
   private pan = false; // one-finger drag pans the zoomed view (viewer only), like a minimap
-  private holdingLeft = false;
-  // A LATCHED left-button-down state (mouse mode). Unlike dragLock (which holds the button only for
-  // the duration of one continuous drag), this keeps the host's left button pressed across separate
-  // taps/drags until the user toggles it off — so you can grab a window edge on the dev machine, move
-  // the cursor, and RESIZE/DRAG the window, then release. See setLeftHold.
+  // A LATCHED left-button-down state (mouse mode). Keeps the host's left button pressed across
+  // separate taps/drags until the user toggles it off — so you can grab a window edge on the dev
+  // machine, move the cursor, and RESIZE/DRAG the window, then release. See setLeftHold.
   private leftHeldToggle = false;
   private leftHoldListener: ((held: boolean) => void) | null = null;
+  private screenClickListener: (() => void) | null = null;
   private cursor = { nx: 0.5, ny: 0.5 };
 
   private readonly pointers = new Map<number, Pointer>();
@@ -89,7 +87,6 @@ export class InputController {
   // ---- public control surface (wired to the ribbon buttons) ----
   setInteraction(kind: Interaction): void {
     this.interaction = kind;
-    if (kind === "viewer") this.dragLock = false;
     // A latched button hold only makes sense while directing the mouse (Interact mode); leaving it
     // must release the button so it can't get stuck down on the host.
     if (kind !== "mouse") this.setLeftHold(false);
@@ -99,12 +96,6 @@ export class InputController {
   }
   setCallbacks(cb: InputCallbacks): void {
     this.cb = cb;
-  }
-  setDragLock(on: boolean): void {
-    this.dragLock = on;
-  }
-  getDragLock(): boolean {
-    return this.dragLock;
   }
   /**
    * Latch the host's LEFT button down (or release it). While latched, touching/dragging the screen
@@ -117,11 +108,9 @@ export class InputController {
     if (on === this.leftHeldToggle) return;
     this.leftHeldToggle = on;
     if (on) {
-      this.holdingLeft = true;
       this.send({ type: "pointer", action: "down", button: "left", x: this.cursor.nx, y: this.cursor.ny });
       navigator.vibrate?.(20);
     } else {
-      this.holdingLeft = false;
       this.send({ type: "pointer", action: "up", button: "left" });
       navigator.vibrate?.(12);
     }
@@ -132,6 +121,12 @@ export class InputController {
   }
   setLeftHoldListener(fn: (held: boolean) => void): void {
     this.leftHoldListener = fn;
+  }
+  /** Fires whenever a TOUCH/POINTER gesture on the screen sends a click to the host (not the
+   *  ribbon's explicit Click buttons). Lets the app-switcher UI dismiss itself on tap, mirroring
+   *  the OS: clicking dismisses the switcher overlay. */
+  setScreenClickListener(fn: () => void): void {
+    this.screenClickListener = fn;
   }
   setDragScroll(on: boolean): void {
     this.dragScroll = on;
@@ -151,9 +146,11 @@ export class InputController {
   private isPanning(): boolean {
     return this.pan && this.interaction === "viewer";
   }
-  /** Explicit click at the current virtual cursor (Click / Right buttons). */
-  click(button: MouseButton, double = false): void {
-    this.send({ type: "pointer", action: "click", button, double, x: this.cursor.nx, y: this.cursor.ny });
+  /** Explicit click at the current virtual cursor (Click / Right buttons). `modifiers` are
+   *  held on the HOST for the duration of the click — e.g. ["meta"] / ["control"] for the
+   *  open-the-link-under-the-cursor chord (Link button). */
+  click(button: MouseButton, double = false, modifiers?: string[]): void {
+    this.send({ type: "pointer", action: "click", button, double, modifiers, x: this.cursor.nx, y: this.cursor.ny });
     navigator.vibrate?.(15);
   }
   /** Rapid N-click at the cursor (2 = double, 3 = triple/select-all in browsers). */
@@ -268,6 +265,7 @@ export class InputController {
     if (!only || only.moved || only.consumed) return;
     only.consumed = true;
     this.send({ type: "pointer", action: "click", button: "right", x: this.cursor.nx, y: this.cursor.ny });
+    this.screenClickListener?.();
     navigator.vibrate?.(20);
   }
 
@@ -330,12 +328,6 @@ export class InputController {
     // viewer + mouse: absolute — the pointer tracks the finger.
     const n = this.view.canvasToNorm(p.x, p.y);
     this.moveCursor(n.nx, n.ny);
-
-    // Drag-hold (mouse mode): keep the left button down through the drag.
-    if (this.interaction === "mouse" && this.dragLock && !this.holdingLeft) {
-      this.holdingLeft = true;
-      this.send({ type: "pointer", action: "down", button: "left", x: this.cursor.nx, y: this.cursor.ny });
-    }
     this.send({ type: "pointer", action: "move", x: this.cursor.nx, y: this.cursor.ny });
   }
 
@@ -390,6 +382,7 @@ export class InputController {
       const tf = this.twoFinger;
       if (tf && !tf.moved && this.interaction === "mouse" && performance.now() - tf.start < TAP_MS) {
         this.send({ type: "pointer", action: "click", button: "right", x: this.cursor.nx, y: this.cursor.ny });
+        this.screenClickListener?.();
         navigator.vibrate?.(20);
       }
       this.twoFinger = null;
@@ -410,10 +403,6 @@ export class InputController {
       return;
     }
 
-    if (this.holdingLeft && this.pointers.size === 0) {
-      this.holdingLeft = false;
-      this.send({ type: "pointer", action: "up", button: "left" });
-    }
     if (this.pointers.size < 2) this.twoFinger = null;
 
     if (!ptr || ptr.consumed) {
@@ -443,6 +432,7 @@ export class InputController {
     const n = this.view.canvasToNorm(ptr.startX, ptr.startY);
     this.moveCursor(n.nx, n.ny);
     this.send({ type: "pointer", action: "click", button: "left", x: n.nx, y: n.ny });
+    this.screenClickListener?.();
     navigator.vibrate?.(12);
   }
 }

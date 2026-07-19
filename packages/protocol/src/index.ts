@@ -175,6 +175,11 @@ export interface PointerMessage {
   button?: MouseButton;
   /** When action === "click", whether it is a double click. */
   double?: boolean;
+  /**
+   * Keys held down for the duration of the click, e.g. ["control"] or ["meta"] — the
+   * modifier-click that opens a link under the cursor (Ctrl+click / ⌘-click).
+   */
+  modifiers?: string[];
 }
 
 export interface ScrollMessage {
@@ -189,6 +194,9 @@ export interface KeyMessage {
   type: "key";
   /** Named key, e.g. "Enter", "Escape", "ArrowUp", "Backspace", "Tab", "a". */
   key: string;
+  /** "tap" (default) presses and releases. "down"/"up" hold or release the key and leave it
+   *  that way — how the app switcher keeps its ⌘/Alt held while Tab taps cycle it. The agent
+   *  releases any key still held when the controller disconnects. */
   press?: "tap" | "down" | "up";
   /** e.g. ["control"], ["meta","shift"]. */
   modifiers?: string[];

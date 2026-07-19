@@ -109,10 +109,18 @@ export async function createNutBackend(): Promise<InputBackend | null> {
     async buttonUp(button) {
       await mouse.releaseButton(toButton(button));
     },
-    async click(button, double, nx, ny) {
+    async click(button, double, nx, ny, modifiers = []) {
       if (nx !== undefined && ny !== undefined) await mouse.setPosition(await toPoint(nx, ny));
-      if (double) await mouse.doubleClick(toButton(button));
-      else await mouse.click(toButton(button));
+      const mods = modifiers
+        .map((m) => modMap[m.toLowerCase()])
+        .filter((m): m is unknown => m !== undefined);
+      for (const m of mods) await keyboard.pressKey(m);
+      try {
+        if (double) await mouse.doubleClick(toButton(button));
+        else await mouse.click(toButton(button));
+      } finally {
+        for (const m of [...mods].reverse()) await keyboard.releaseKey(m);
+      }
     },
     async scroll(dx, dy) {
       if (dy) dy > 0 ? await mouse.scrollDown(Math.abs(dy)) : await mouse.scrollUp(Math.abs(dy));
@@ -137,6 +145,17 @@ export async function createNutBackend(): Promise<InputBackend | null> {
       await keyboard.pressKey(key);
       await keyboard.releaseKey(key);
       for (const m of [...mods].reverse()) await keyboard.releaseKey(m);
+    },
+    async keyHold(name, down) {
+      // Modifier names ("meta", "alt") resolve through modMap — resolveKey only knows
+      // regular keys — so the app-switcher can hold its ⌘/Alt.
+      const key = modMap[name.toLowerCase()] ?? resolveKey(name);
+      if (key === undefined) {
+        log.warn(`nut.js: unknown key "${name}"`);
+        return;
+      }
+      if (down) await keyboard.pressKey(key);
+      else await keyboard.releaseKey(key);
     },
   };
 }
@@ -165,5 +184,9 @@ function buildKeyMap(Key: any): Record<string, unknown> {
     end: Key.End,
     pageup: Key.PageUp,
     pagedown: Key.PageDown,
+    // Backtick — the ⌘+` same-app window cycle (resolveKey's single-char path only covers A-Z/0-9).
+    "`": Key.Grave,
+    grave: Key.Grave,
+    backquote: Key.Grave,
   };
 }

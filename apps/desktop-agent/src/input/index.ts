@@ -44,5 +44,6 @@ function createNullBackend(): InputBackend {
     async scroll() {},
     async typeText() {},
     async keyTap() {},
+    async keyHold() {},
   };
 }

@@ -159,9 +159,12 @@ function transportLabel(t: string): string {
  *  - Browse:   zoom −/+, pan, scroll/page; tap the screen to click, just like the real device.
  *  - Type:     write text — textarea + special keys + Insert (no Enter) / Send (Enter).
  *  - Interact: full control — Mouse|Touch|Shortcuts segment. Mouse: Left, Left-held (latched
- *    button-down for dragging/resizing host windows), Right, Double, Drag. Shortcuts: Copy (host
- *    selection → this device), Paste (this device → host), Select all, Undo, Redo, Save — with
- *    Ctrl/⌘ C/V/A/Z/S forwarded on desktop controllers (see onGlobalKey/onGlobalPaste).
+ *    button-down for dragging/resizing host windows), Right, Double, Link (modifier-click that
+ *    opens the link under the cursor). Shortcuts: Copy (host
+ *    selection → this device), Paste (this device → host), Select all, Undo, Redo, Save, Apps
+ *    (hold-open ⌘-Tab/Alt+Tab app switcher driven by a floating Tab/Switch pill) and Window
+ *    (same-app window cycle, hidden on Windows hosts) — with Ctrl/⌘ C/V/A/Z/S forwarded on
+ *    desktop controllers (see onGlobalKey/onGlobalPaste).
  *  - Monitor:  pick which display to view + control.
  *
  * A chevron collapses the whole ribbon to a slim handle to free the screen.
@@ -210,6 +213,15 @@ export class Controls {
   // persistent pill so the held state is obvious even if the ribbon is collapsed.
   private holdLeftBtn: HTMLButtonElement | null = null;
   private holdPill!: HTMLButtonElement;
+  // App-switcher hold session (Shortcuts): the host's switcher modifier (⌘ on macOS, Alt
+  // elsewhere) stays HELD so its overlay stays open; the floating pill's Tab/Switch buttons
+  // cycle and commit. Mirrors the left-hold latch UX above.
+  private appSwitchActive = false;
+  private appSwitchMod = "alt"; // captured at start so the release always matches the press
+  private appSwitchBtn: HTMLButtonElement | null = null;
+  private switchPill!: HTMLElement;
+  private switchPillText!: HTMLElement;
+  private switchPillHint!: HTMLElement;
 
   private activeTab: Tab | null = null;
   private interactMode: "mouse" | "touch" | "shortcuts" = "mouse";
@@ -246,6 +258,8 @@ export class Controls {
     this.status = status;
     this.statusDot.dataset.status = status;
     if (status === "connected") this.lastError = ""; // a fresh connection supersedes a stale error
+    // A dropped link ends the switcher session UI; the agent releases the held key itself.
+    if (status !== "connected") this.endAppSwitch(false);
     this.renderStatusText();
     this.updateStatusCollapse();
     if (this.connectionOverlay && !this.connectionOverlay.classList.contains("hidden")) this.renderConnection();
@@ -325,6 +339,15 @@ export class Controls {
   setActiveDisplay(id: number): void {
     this.activeDisplay = id;
     this.renderMonitors();
+    this.updateSwitchPillHint(); // reaching the main monitor (any way) retires the switcher hint
+  }
+
+  /** Switch which host monitor is captured — shared by the Monitors picker and the switcher hint. */
+  private selectDisplay(id: number): void {
+    this.deps.conn.send({ type: "select-display", id });
+    this.activeDisplay = id;
+    this.renderMonitors();
+    this.updateSwitchPillHint();
   }
 
   // ---- connection dialog (opened by tapping the status pill) ----------------
@@ -608,6 +631,38 @@ export class Controls {
     this.root.appendChild(this.holdPill);
     this.deps.input.setLeftHoldListener((held) => this.onLeftHoldChanged(held));
 
+    // Persistent app-switcher bar — same idea as the hold pill: floats above the screen while
+    // the host's switcher overlay is open (its ⌘/Alt held down), so the explanation and the
+    // actions stay reachable even with the ribbon collapsed. Full-width below the status row:
+    // it must hold a real explanation, since the overlay itself may be on an invisible monitor.
+    this.switchPill = el("div", "wd-hold-pill wd-switch-pill hidden");
+    this.switchPillText = el("div", "wd-switch-text"); // filled per host platform in startAppSwitch
+    const tabBtn = el("button", "wd-pill-btn", "Tab");
+    tabBtn.type = "button";
+    tabBtn.setAttribute("aria-label", "Highlight the next app in the switcher");
+    tabBtn.onclick = () => {
+      this.deps.conn.send({ type: "key", key: "Tab" });
+      navigator.vibrate?.(15);
+    };
+    const switchBtn = el("button", "wd-pill-btn wd-pill-btn-primary", "Switch");
+    switchBtn.type = "button";
+    switchBtn.setAttribute("aria-label", "Switch to the highlighted app");
+    switchBtn.onclick = () => this.endAppSwitch();
+    const cancelBtn = el("button", "wd-pill-btn", "Cancel");
+    cancelBtn.type = "button";
+    cancelBtn.setAttribute("aria-label", "Close the switcher without switching apps");
+    cancelBtn.onclick = () => this.cancelAppSwitch();
+    const actions = el("div", "wd-switch-actions");
+    actions.append(tabBtn, switchBtn, cancelBtn);
+    // Extra row: the OS draws the switcher overlay on ONE monitor (the primary), so it's
+    // invisible while the controller views a secondary screen. Filled by updateSwitchPillHint().
+    this.switchPillHint = el("div", "wd-pill-hint hidden");
+    this.switchPill.append(this.switchPillText, actions, this.switchPillHint);
+    this.root.appendChild(this.switchPill);
+    // Tapping the screen mirrors the OS: the click dismisses the switcher overlay (or picks the
+    // app under the finger), so drop our bar and release the held modifier right after it.
+    this.deps.input.setScreenClickListener(() => this.endAppSwitch());
+
     // Desktop keyboards: forward Ctrl/⌘ C / V / A to the host (paste rides the paste EVENT so the
     // browser hands us the clipboard text without a permissions prompt).
     document.addEventListener("keydown", (e) => this.onGlobalKey(e));
@@ -621,6 +676,73 @@ export class Controls {
   private onLeftHoldChanged(held: boolean): void {
     this.holdLeftBtn?.classList.toggle("on", held);
     this.holdPill.classList.toggle("hidden", !held);
+  }
+
+  /** Open the host's app switcher and KEEP it open by holding its modifier down (⌘-Tab on a
+   *  macOS host, Alt+Tab elsewhere — both switchers live only while the modifier is held).
+   *  The floating pill then drives it: Tab cycles, Switch commits. */
+  private startAppSwitch(): void {
+    if (this.appSwitchActive) return;
+    this.appSwitchActive = true;
+    this.appSwitchMod = this.hostPlatform === "darwin" ? "meta" : "alt";
+    this.deps.conn.send({ type: "key", key: this.appSwitchMod, press: "down" });
+    this.deps.conn.send({ type: "key", key: "Tab" });
+    const chord = this.hostPlatform === "darwin" ? "⌘+Tab" : "Alt+Tab";
+    this.switchPillText.replaceChildren(
+      el("strong", undefined, `You're in ${chord} mode. `),
+      el("span", undefined, "Tab changes the selection, Switch picks it, Cancel closes without switching."),
+    );
+    this.appSwitchBtn?.classList.add("on");
+    this.switchPill.classList.remove("hidden");
+    this.updateSwitchPillHint();
+    navigator.vibrate?.(20);
+  }
+
+  /** Dismiss the switcher WITHOUT switching: Esc while the modifier is still held is the OS's own
+   *  cancel gesture (⌘+Esc / Alt+Esc), then the release is a no-op — focus stays where it was. */
+  private cancelAppSwitch(): void {
+    if (!this.appSwitchActive) return;
+    this.deps.conn.send({ type: "key", key: "Escape" });
+    this.endAppSwitch();
+  }
+
+  /** The OS draws the switcher overlay on its MAIN monitor only (the Dock's screen on macOS, the
+   *  primary on Windows/Linux), so it's invisible while the controller views another display.
+   *  Suggest jumping the view there — never force it, since the user may already know which app
+   *  is next in the cycle; if the primary can't be identified, at least say where the overlay is. */
+  private updateSwitchPillHint(): void {
+    const primary = this.displays.find((d) => d.primary);
+    const away = primary ? primary.id !== this.activeDisplay : this.displays.length > 1;
+    const show = this.appSwitchActive && away;
+    this.switchPillHint.classList.toggle("hidden", !show);
+    this.switchPillHint.replaceChildren();
+    if (!show) return;
+    if (primary) {
+      this.switchPillHint.appendChild(
+        el("span", undefined, `The switcher always shows on the primary monitor (${primary.name}), so you can't see it here.`),
+      );
+      const view = el("button", "wd-pill-btn wd-pill-btn-sm", "View");
+      view.type = "button";
+      view.title = "Switch this view to the primary monitor";
+      view.onclick = () => this.selectDisplay(primary.id);
+      this.switchPillHint.appendChild(view);
+    } else {
+      this.switchPillHint.appendChild(
+        el("span", undefined, "The switcher always shows on the host's primary monitor, so it may not be visible here."),
+      );
+    }
+  }
+
+  /** Release the held switcher modifier — the host switches to the highlighted app. Called by
+   *  Switch/Apps, and as the auto-release when leaving Shortcuts/Interact; `send: false` skips
+   *  the release message when the connection is already gone (the agent releases it itself). */
+  private endAppSwitch(send = true): void {
+    if (!this.appSwitchActive) return;
+    this.appSwitchActive = false;
+    if (send) this.deps.conn.send({ type: "key", key: this.appSwitchMod, press: "up" });
+    this.appSwitchBtn?.classList.remove("on");
+    this.switchPill.classList.add("hidden");
+    navigator.vibrate?.(12);
   }
 
   private buildViewerPane(): HTMLElement {
@@ -691,8 +813,10 @@ export class Controls {
   private renderInteract(): void {
     const { input } = this.deps;
     this.interactHost.replaceChildren();
+    this.endAppSwitch(); // a held switcher modifier must not survive leaving the Shortcuts segment
     this.holdLeftBtn = null; // reassigned below only in Mouse mode (Touch has no Hold button)
     this.copyBtn = null; // reassigned below only in Shortcuts mode
+    this.appSwitchBtn = null; // reassigned below only in Shortcuts mode
 
     const modeGroup = el("div", "wd-group");
     const head = el("div", "wd-group-head");
@@ -723,7 +847,7 @@ export class Controls {
       left.onclick = () => input.click("left");
       // Latched left-button HOLD, shown as a filled-left-button mouse ("Left" held). Press once to
       // hold the host's left button DOWN, move the cursor to drag/resize a window on the dev machine,
-      // press again to release. Distinct from Drag (which only holds during a single continuous drag).
+      // press again to release.
       // The `on` state is driven by onLeftHoldChanged so it stays correct through auto-release too.
       const holdLeft = iconBtn("mouse-left-hold", "Left");
       holdLeft.title = "Hold the left button down — grab a window edge, move to resize/drag, tap again to release";
@@ -735,16 +859,21 @@ export class Controls {
       right.onclick = () => input.click("right");
       const dbl = iconBtn("double-click", "Double");
       dbl.onclick = () => input.multiClick(2);
-      const dragHold = iconBtn("drag", "Drag");
-      dragHold.onclick = () => {
-        const on = !input.getDragLock();
-        input.setDragLock(on);
-        dragHold.classList.toggle("on", on);
-      };
-      items.append(left, holdLeft, right, dbl, dragHold);
+      // Modifier-click: opens the link under the cursor in a file/page/doc. The chord is the
+      // HOST's — ⌘-click on a macOS host, Ctrl+click elsewhere — so hostModifier() picks it and
+      // the agent holds that key around the click. Label stays the outcome ("Link"), not the
+      // platform-specific chord, and short enough that the five buttons never wrap.
+      const openLink = iconBtn("open-link", "Link");
+      openLink.title =
+        this.hostPlatform === "darwin"
+          ? "Open the link under the cursor (⌘-click)"
+          : "Open the link under the cursor (Ctrl+click)";
+      openLink.setAttribute("aria-label", "Open the link under the cursor with a modifier-click");
+      openLink.onclick = () => input.click("left", false, [this.hostModifier()]);
+      items.append(left, holdLeft, right, dbl, openLink);
     } else if (this.interactMode === "shortcuts") {
-      // Six buttons don't fit one phone-width line, so this grid folds them 3+3 and goes six-across
-      // only where there's real room (see .wd-shortcut-grid) — clipboard trio, then edit/file trio.
+      // Eight buttons (seven on a Windows host) fold 4+4 on phones and go one-row where there's
+      // real room — .wd-shortcut-grid reads the exact count from --wd-shortcut-cols (set below).
       items.classList.add("wd-shortcut-grid");
       const save = iconBtn("save", "Save");
       save.title = "Save in the host's focused app";
@@ -767,7 +896,33 @@ export class Controls {
       paste.title = "Paste this device's clipboard into the host's focused app";
       paste.onclick = () => this.pasteToHost();
       paste.disabled = !this.clipboardCap;
-      items.append(save, selectAll, undo, redo, copy, paste);
+      // Hold-open app switcher (see startAppSwitch): tapping again commits, same as Switch.
+      const apps = iconBtn("apps", "Apps");
+      apps.title =
+        this.hostPlatform === "darwin"
+          ? "Switch between apps (holds ⌘-Tab open)"
+          : "Switch between apps and windows (holds Alt+Tab open)";
+      apps.classList.toggle("on", this.appSwitchActive);
+      apps.onclick = () => (this.appSwitchActive ? this.endAppSwitch() : this.startAppSwitch());
+      this.appSwitchBtn = apps;
+      const buttons = [save, selectAll, undo, redo, copy, paste, apps];
+      // Cycle the windows of the SAME app (e.g. several VS Code windows): ⌘+` on a macOS host,
+      // Super+` on Linux (GNOME's default). Windows has no same-app cycle chord — Alt+Tab covers
+      // it there — so the button is skipped and the grid falls back to seven cells.
+      if (this.hostPlatform !== "win32") {
+        const cycle = iconBtn("window-cycle", "Window");
+        cycle.title =
+          this.hostPlatform === "darwin"
+            ? "Next window of the same app (⌘ + `)"
+            : "Next window of the same app (Super + `)";
+        cycle.onclick = () => {
+          this.deps.conn.send({ type: "key", key: "`", modifiers: ["meta"] });
+          navigator.vibrate?.(15);
+        };
+        buttons.push(cycle);
+      }
+      items.append(...buttons);
+      items.style.setProperty("--wd-shortcut-cols", String(buttons.length));
     } else {
       const tap = iconBtn("pointer", "Tap");
       tap.onclick = () => input.click("left");
@@ -1311,11 +1466,7 @@ export class Controls {
       const label = `${d.name}${d.primary ? " ★" : ""}`;
       const b = btn(label);
       b.classList.toggle("on", d.id === this.activeDisplay);
-      b.onclick = () => {
-        this.deps.conn.send({ type: "select-display", id: d.id });
-        this.activeDisplay = d.id;
-        this.renderMonitors();
-      };
+      b.onclick = () => this.selectDisplay(d.id);
       this.monitorList.appendChild(b);
     });
   }
@@ -1327,6 +1478,9 @@ export class Controls {
     }
     this.activeTab = tab;
     if (this.collapsed) this.setCollapsed(false);
+    // Leaving Interact must release a held switcher modifier, like setInteraction below releases
+    // a latched left button — neither may get stuck down on the host.
+    if (tab !== "interact") this.endAppSwitch();
     for (const [key, b] of this.tabButtons) b.classList.toggle("on", key === tab);
     for (const [key, pane] of this.tabPanes) pane.classList.toggle("hidden", key !== tab);
 

@@ -72,6 +72,9 @@ export function createControllerSession(
   let attemptsLeft = 5;
   let closed = false;
   const clientId = opts.clientId;
+  // Keys this controller is HOLDING down (key + press:"down" — the app-switcher's ⌘/Alt).
+  // Tracked so a dropped/superseded controller can never leave one stuck down on the host.
+  const heldKeys = new Set<string>();
 
   const send = (msg: ServerMessage) => channel.sendText(JSON.stringify(msg));
 
@@ -107,6 +110,8 @@ export function createControllerSession(
   const handleClose = () => {
     if (closed) return;
     closed = true;
+    for (const key of heldKeys) void ctx.input.keyHold(key, false).catch(() => {});
+    heldKeys.clear();
     if (controller) {
       ctx.removeController(controller);
       controller = null;
@@ -171,7 +176,7 @@ export function createControllerSession(
     }
 
     if (!controller) return;
-    void dispatch(ctx, msg, controller).catch((error) => {
+    void dispatch(ctx, msg, controller, heldKeys).catch((error) => {
       log.error("input error", (error as Error).message);
       controller?.send({ type: "error", message: (error as Error).message, code: "input" });
     });
@@ -231,7 +236,12 @@ const USER_INTENT_TYPES = new Set<ClientMessage["type"]>([
   "still-here",
 ]);
 
-async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Controller): Promise<void> {
+async function dispatch(
+  ctx: AgentContext,
+  msg: ClientMessage,
+  controller: Controller,
+  heldKeys: Set<string>,
+): Promise<void> {
   if (USER_INTENT_TYPES.has(msg.type)) ctx.noteUserIntent(controller);
   switch (msg.type) {
     case "pointer":
@@ -239,13 +249,19 @@ async function dispatch(ctx: AgentContext, msg: ClientMessage, controller: Contr
       else if (msg.action === "down") await ctx.input.buttonDown(msg.button ?? "left", msg.x, msg.y);
       else if (msg.action === "up") await ctx.input.buttonUp(msg.button ?? "left");
       else if (msg.action === "click")
-        await ctx.input.click(msg.button ?? "left", Boolean(msg.double), msg.x, msg.y);
+        await ctx.input.click(msg.button ?? "left", Boolean(msg.double), msg.x, msg.y, msg.modifiers);
       break;
     case "scroll":
       await ctx.input.scroll(msg.dx, msg.dy);
       break;
     case "key":
-      await ctx.input.keyTap(msg.key, msg.modifiers);
+      if (msg.press === "down" || msg.press === "up") {
+        await ctx.input.keyHold(msg.key, msg.press === "down");
+        if (msg.press === "down") heldKeys.add(msg.key);
+        else heldKeys.delete(msg.key);
+      } else {
+        await ctx.input.keyTap(msg.key, msg.modifiers);
+      }
       break;
     case "type":
       await ctx.input.typeText(msg.text, msg.submit);

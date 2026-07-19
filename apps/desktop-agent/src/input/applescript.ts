@@ -46,6 +46,12 @@ export async function createAppleScriptBackend(): Promise<InputBackend | null> {
         await run(`tell application "System Events" to keystroke ${asAppleString(name)}${usingClause}`);
       }
     },
+    async keyHold(name, down) {
+      // System Events can only hold MODIFIERS (`key down command`) — which is all the
+      // controller ever holds (the app-switcher's ⌘/Alt). Anything else is a no-op.
+      const mod = HOLDABLE_MODIFIERS[name.toLowerCase()];
+      if (mod) await run(`tell application "System Events" to key ${down ? "down" : "up"} ${mod}`);
+    },
   };
 }
 
@@ -72,6 +78,19 @@ function modifierClause(name: string): string | null {
       return null;
   }
 }
+
+/** Modifier names accepted by System Events' `key down` / `key up`. */
+const HOLDABLE_MODIFIERS: Record<string, string> = {
+  meta: "command",
+  cmd: "command",
+  command: "command",
+  win: "command",
+  control: "control",
+  ctrl: "control",
+  alt: "option",
+  option: "option",
+  shift: "shift",
+};
 
 /** AppleScript virtual key codes for common special keys. */
 const KEY_CODES: Record<string, number> = {

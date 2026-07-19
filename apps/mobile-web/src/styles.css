@@ -405,7 +405,7 @@ textarea {
   flex-wrap: wrap;
   justify-content: center;
 }
-/* Interact → Mouse row: the five buttons (Left, Left-hold, Right, Double, Drag) share ONE line and
+/* Interact → Mouse row: the five buttons (Left, Left-hold, Right, Double, Link) share ONE line and
    keep the normal full-size horizontal icon+label look. Each is sized from its own content
    (flex-basis:auto) and then grows to split any leftover width, so a roomy screen gives roomy,
    evenly balanced buttons and a narrow phone only trims the longest label. It shrinks when it must,
@@ -426,16 +426,17 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Interact → Shortcuts row: six buttons (Copy, Paste, Select all, Undo, Redo, Save). Six full-size
-   buttons cannot share one line on a phone the way Mouse's five can — a nowrap row would either
-   ellipsis every label down to nothing or, once the buttons hit their min-content width, overflow
-   past both edges of the centered row and get clipped there (unreachable, not just ugly). So this
-   is an equal-column grid instead: 3+3 on phones, six-across once the ribbon is genuinely wide
-   enough for the labels. Columns are minmax(0,1fr), so a long label ellipses inside its own cell
-   and can never push the grid wider than the panel. */
+/* Interact → Shortcuts row: eight buttons (seven on a Windows host, which has no same-app window
+   cycle). Full-size buttons cannot share one line on a phone the way Mouse's five can — a nowrap
+   row would either ellipsis every label down to nothing or, once the buttons hit their min-content
+   width, overflow past both edges of the centered row and get clipped there (unreachable, not just
+   ugly). So this is an equal-column grid instead: 4+4 (or 4+3) on phones — never a third row — and
+   one row once the ribbon is genuinely wide enough. JS sets --wd-shortcut-cols to the exact button
+   count, so the wide layout is a single full row on every host platform. Columns are minmax(0,1fr),
+   so a long label ellipses inside its own cell and can never push the grid wider than the panel. */
 .wd-group-items.wd-shortcut-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   width: 100%;
 }
@@ -449,11 +450,11 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* One row of six only where every label still fits whole (tablet landscape and the desktop
-   ribbon) — below this, 3+3 reads better than six squeezed, half-labelled buttons. */
-@media (min-width: 680px) {
+/* One full row only where every label still fits whole even with eight cells (the desktop
+   ribbon) — below this, 4+4 reads better than eight squeezed, half-labelled buttons. */
+@media (min-width: 860px) {
   .wd-group-items.wd-shortcut-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(var(--wd-shortcut-cols, 8), minmax(0, 1fr));
   }
 }
 @media (max-width: 389px) {
@@ -464,6 +465,7 @@ textarea {
     gap: 4px;
     padding-left: 4px;
     padding-right: 4px;
+    font-size: 12px; /* four columns on a small phone: buy the labels a little room */
   }
   .wd-group-items.wd-shortcut-grid .wd-btn svg {
     width: 18px;
@@ -999,6 +1001,77 @@ textarea {
   50% {
     opacity: 0.72;
   }
+}
+
+/* App-switcher bar: reuses the hold pill's accent look, but as a FULL-WIDTH panel right below
+   the status row — the OS overlay it narrates may be on another (invisible) monitor, so this bar
+   IS the switcher UI and must carry a real explanation, not just two bare buttons. The container
+   itself isn't tappable (a div), so no pointer cursor and no pulse: the pulse reads as "tap me"
+   on the hold pill, and steady is easier to read next to real buttons. */
+.wd-switch-pill {
+  cursor: default;
+  animation: none;
+  left: 8px;
+  right: 8px;
+  transform: none;
+  top: calc(env(safe-area-inset-top, 0px) + 54px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  max-width: 560px;
+  margin: 0 auto;
+}
+.wd-switch-text {
+  font: 500 13px/1.45 system-ui, sans-serif;
+}
+.wd-switch-text strong {
+  font-weight: 700;
+}
+.wd-switch-actions {
+  display: flex;
+  gap: 8px;
+}
+.wd-switch-actions .wd-pill-btn {
+  flex: 1;
+  padding: 9px 0;
+  text-align: center;
+}
+/* Extra row — "the overlay opened on the primary monitor, not the one you're viewing". */
+.wd-pill-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.35);
+  font: 500 12px/1.4 system-ui, sans-serif;
+}
+.wd-pill-hint span {
+  flex: 1 1 auto;
+}
+.wd-pill-btn-sm {
+  flex: none;
+  padding: 6px 14px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.wd-pill-btn {
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  background: transparent;
+  color: #fff;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: 600 13px/1 system-ui, sans-serif;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.wd-pill-btn:active {
+  background: rgba(255, 255, 255, 0.25);
+}
+.wd-pill-btn-primary {
+  background: rgba(255, 255, 255, 0.18);
 }
 
 /* PIN unlock overlay */
