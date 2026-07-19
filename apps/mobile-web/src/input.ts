@@ -19,8 +19,18 @@ function clamp01(n: number): number {
   return n < 0 ? 0 : n > 1 ? 1 : n;
 }
 
-/** Pixels of finger drag per wheel tick (smaller = faster scrolling). */
-const DRAG_SCROLL_DIVISOR = 2.5;
+/** Host CONTENT pixels one protocol scroll unit moves, by host platform. The macOS injector
+ * scrolls in raw PIXELS (libnut's CGEventCreateScrollWheelEvent uses pixel units), while
+ * Windows/Linux inject whole wheel notches (~3 lines ≈ ~100 px of content each). Dividing by
+ * this makes one swipe move the same amount of content on every host. */
+const SCROLL_UNIT_HOST_PX: Record<string, number> = { darwin: 1, win32: 100, linux: 90 };
+const SCROLL_UNIT_FALLBACK_PX = 90; // unknown platform: assume chunky notch units (too slow beats runaway)
+
+/** Flick boost, mimicking native mobile scrolling: finger speed beyond FREE (css px/ms — calm 1:1
+ * tracking) scales the scroll up by RATE per extra px/ms, capped at MAX. */
+const SCROLL_BOOST_FREE = 0.35;
+const SCROLL_BOOST_RATE = 1.8;
+const SCROLL_BOOST_MAX = 3.5;
 
 interface Pointer {
   x: number;
@@ -60,6 +70,13 @@ export class InputController {
   private leftHoldListener: ((held: boolean) => void) | null = null;
   private screenClickListener: (() => void) | null = null;
   private cursor = { nx: 0.5, ny: 0.5 };
+  // Host OS (welcome's agent.platform) — selects the scroll-unit size (see SCROLL_UNIT_HOST_PX).
+  private hostPlatform = "";
+  // Drag-scroll state: sub-unit remainders (so slow drags never round to zero) + last-move time
+  // for the flick boost. Reset at the start of every scroll-capable gesture.
+  private scrollRemX = 0;
+  private scrollRemY = 0;
+  private lastDragAt = 0;
 
   private readonly pointers = new Map<number, Pointer>();
   private longPressTimer = 0;
@@ -96,6 +113,9 @@ export class InputController {
   }
   setCallbacks(cb: InputCallbacks): void {
     this.cb = cb;
+  }
+  setHostPlatform(platform: string): void {
+    this.hostPlatform = platform;
   }
   /**
    * Latch the host's LEFT button down (or release it). While latched, touching/dragging the screen
@@ -186,14 +206,47 @@ export class InputController {
     }
     navigator.vibrate?.(15);
   }
-  /** Discrete scroll step from the Scroll ▲▼ buttons. */
-  scrollStep(dy: number): void {
+  /** Discrete scroll step from the Scroll ▲▼ buttons: ~one wheel notch of content per press. */
+  scrollStep(direction: number): void {
+    const unit = SCROLL_UNIT_HOST_PX[this.hostPlatform] ?? SCROLL_UNIT_FALLBACK_PX;
+    const dy = (direction > 0 ? 1 : -1) * Math.max(1, Math.round(110 / unit));
     this.send({ type: "scroll", dx: 0, dy });
   }
 
   // ---- internals ----
   private send(message: ClientMessage): void {
     this.conn.send(message);
+  }
+
+  private resetDragScroll(): void {
+    this.scrollRemX = 0;
+    this.scrollRemY = 0;
+    this.lastDragAt = 0;
+  }
+
+  /**
+   * Drag-to-scroll: convert finger CSS px into host CONTENT px through the view transform — so
+   * the page tracks the finger 1:1 at any zoom, and a swipe across a fitted-out desktop crosses
+   * a whole screen of content instead of a few lines — then apply the flick boost and emit whole
+   * platform scroll units, banking the sub-unit remainder.
+   * Natural direction: swipe up (dy<0) sends positive units (content scrolls down the page).
+   */
+  private sendDragScroll(dxCss: number, dyCss: number): void {
+    const now = performance.now();
+    const dt = this.lastDragAt ? Math.min(80, Math.max(1, now - this.lastDragAt)) : 16;
+    this.lastDragAt = now;
+    const speed = Math.hypot(dxCss, dyCss) / dt;
+    const boost = Math.min(SCROLL_BOOST_MAX, 1 + Math.max(0, speed - SCROLL_BOOST_FREE) * SCROLL_BOOST_RATE);
+    const scale = this.view.getScale() || 1; // css px per host px
+    const unit = SCROLL_UNIT_HOST_PX[this.hostPlatform] ?? SCROLL_UNIT_FALLBACK_PX;
+    this.scrollRemX += (-dxCss * boost) / scale / unit;
+    this.scrollRemY += (-dyCss * boost) / scale / unit;
+    const dx = Math.trunc(this.scrollRemX);
+    const dy = Math.trunc(this.scrollRemY);
+    if (!dx && !dy) return;
+    this.scrollRemX -= dx;
+    this.scrollRemY -= dy;
+    this.send({ type: "scroll", dx, dy });
   }
 
   private positionOf(e: MouseEvent): { x: number; y: number } {
@@ -223,12 +276,14 @@ export class InputController {
 
     if (this.pointers.size === 2) {
       window.clearTimeout(this.longPressTimer);
+      this.resetDragScroll();
       this.beginTwoFinger();
       return;
     }
     if (this.pointers.size === 1) {
       // First finger down = a pan/zoom gesture may be starting. Defer host re-crops until it ends.
       this.view.beginViewGesture();
+      this.resetDragScroll();
       window.clearTimeout(this.longPressTimer);
       // Long-press = right click only in Mouse mode (Touch has no right click). Suppressed while the
       // left button is latched down — a hold-drag must not fire a right click mid-resize.
@@ -315,13 +370,8 @@ export class InputController {
     }
 
     // One-finger scroll: Touch mode always, or any mode with drag-to-scroll enabled.
-    // Natural direction: swipe up -> content scrolls up (wheel down).
     if (this.interaction === "touch" || this.dragScroll) {
-      this.send({
-        type: "scroll",
-        dx: Math.round(-dx / DRAG_SCROLL_DIVISOR),
-        dy: Math.round(-dy / DRAG_SCROLL_DIVISOR),
-      });
+      this.sendDragScroll(dx, dy);
       return;
     }
 
@@ -357,11 +407,7 @@ export class InputController {
       if (this.view.getZoom() > 1) {
         this.view.panByCanvasPixels(dmx, dmy);
       } else {
-        this.send({
-          type: "scroll",
-          dx: Math.round(-dmx / DRAG_SCROLL_DIVISOR),
-          dy: Math.round(-dmy / DRAG_SCROLL_DIVISOR),
-        });
+        this.sendDragScroll(dmx, dmy);
       }
       this.twoFinger.mx = mx;
       this.twoFinger.my = my;

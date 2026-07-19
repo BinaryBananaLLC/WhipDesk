@@ -458,6 +458,11 @@ export class ScreenView {
   getZoom(): number {
     return this.zoom;
   }
+  /** Canvas CSS px per host pixel under the current transform (fit scale × zoom). Input uses it
+   * to convert finger travel into host-content pixels, so drag-scroll speed is zoom-aware. */
+  getScale(): number {
+    return this.computeLayout().S;
+  }
   /** Notified on every zoom change (buttons + pinch). */
   setOnZoom(cb: (zoom: number) => void): void {
     this.onZoomCb = cb;

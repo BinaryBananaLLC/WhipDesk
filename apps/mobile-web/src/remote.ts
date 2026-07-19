@@ -101,6 +101,11 @@ export class RemoteConnection {
   // Set by fetchIceServers ONLY when the edge confirms the caller is an admin (echoes `forced`).
   // A non-admin's #relay=… hash param never flips this, so it can't force relay-only.
   private forcedRelay = false;
+  // Consecutive failed connect attempts since the last working session. start() retries forever,
+  // and the first failure after a background/foreground flip is ROUTINE (the tab's network stack
+  // loses a fetch or two right around a freeze/resume) — flashing it reads as "broken" while the
+  // very next attempt succeeds. Only a persistent streak is worth telling the user about.
+  private failedAttempts = 0;
 
   constructor(
     private readonly deviceId: string,
@@ -138,6 +143,7 @@ export class RemoteConnection {
 
   connect(): void {
     this.closed = false;
+    this.failedAttempts = 0; // fresh user-initiated connect: judge its failures on their own
     this.start();
   }
 
@@ -169,10 +175,17 @@ export class RemoteConnection {
   /** Open a session; on any failure, retry automatically so the user never refreshes. */
   private start(): void {
     void this.open().catch((error) => {
-      this.core.emit("error", `Remote connect failed: ${(error as Error).message}`);
+      this.reportConnectFailure(`Remote connect failed: ${(error as Error).message}`);
       this.core.emit("status", "disconnected");
       this.scheduleReconnect();
     });
+  }
+
+  /** Count a failed attempt and surface it only once it's clearly persistent (3+ in a row) AND
+   * someone is looking — a hidden tab's failures are expected noise its resume path will fix. */
+  private reportConnectFailure(message: string): void {
+    this.failedAttempts += 1;
+    if (this.failedAttempts >= 3 && !document.hidden) this.core.emit("error", message);
   }
 
   /** Tear down the current peer connection + signaling socket without ending reconnects. */
@@ -439,7 +452,7 @@ export class RemoteConnection {
       } catch (error) {
         // Even resilient HTTPS failed (or the device is offline) — retry the whole attempt.
         if (signalDead || this.closed) return;
-        this.core.emit("error", `Remote connect failed: ${(error as Error).message}`);
+        this.reportConnectFailure(`Remote connect failed: ${(error as Error).message}`);
         this.core.emit("status", "disconnected");
         this.scheduleReconnect();
         return;
@@ -620,7 +633,10 @@ export class RemoteConnection {
   }
 
   private wireDataChannel(dc: RTCDataChannel): void {
-    dc.onopen = () => this.core.sendHello();
+    dc.onopen = () => {
+      this.failedAttempts = 0; // a working session ends the failure streak
+      this.core.sendHello();
+    };
     dc.onclose = () => {
       this.core.emit("status", "disconnected");
       this.scheduleReconnect();

@@ -323,6 +323,7 @@ async function start(): Promise<void> {
     lashstash.setActiveDisplay(w.activeDisplay);
     lashstash.setDisplays(w.displays ?? []);
     lashstash.setHostPlatform(w.agent.platform);
+    input.setHostPlatform(w.agent.platform);
     // On the FIRST connect, start at fit (1×) and clear any leftover server-side crop.
     if (firstWelcome) {
       view.setZoom(1);

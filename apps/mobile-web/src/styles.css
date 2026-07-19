@@ -722,6 +722,13 @@ textarea {
   width: 100%;
   resize: vertical;
   min-height: 46px;
+  /* Chat-style: grows with the draft (see syncPromptHeight in controls.ts) up to here, then
+     scrolls internally. */
+  max-height: 30vh;
+  overflow-y: auto;
+  /* iOS: a one-finger drag must pan THIS box's text, not rubber-band the fixed, unscrollable page. */
+  touch-action: pan-y;
+  overscroll-behavior: contain;
   padding: 10px;
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -735,6 +742,10 @@ textarea {
   width: 100%;
   resize: vertical;
   min-height: 90px;
+  max-height: 40vh;
+  overflow-y: auto;
+  touch-action: pan-y; /* same iOS drag-to-scroll allowance as .wd-type-input */
+  overscroll-behavior: contain;
   margin-top: 10px;
   padding: 10px;
   border-radius: 10px;

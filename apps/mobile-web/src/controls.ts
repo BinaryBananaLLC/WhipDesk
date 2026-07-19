@@ -753,8 +753,8 @@ export class Controls {
     const zoomOut = holdBtn(iconBtn("minus", "", "wd-btn wd-icon-only"), () => view.zoomBy(0.9));
     const zoomIn = holdBtn(iconBtn("plus", "", "wd-btn wd-icon-only"), () => view.zoomBy(1.11));
 
-    const scrollUp = holdBtn(iconBtn("scroll-up", "", "wd-btn wd-icon-only"), () => input.scrollStep(-6));
-    const scrollDown = holdBtn(iconBtn("scroll-down", "", "wd-btn wd-icon-only"), () => input.scrollStep(6));
+    const scrollUp = holdBtn(iconBtn("scroll-up", "", "wd-btn wd-icon-only"), () => input.scrollStep(-1));
+    const scrollDown = holdBtn(iconBtn("scroll-down", "", "wd-btn wd-icon-only"), () => input.scrollStep(1));
     // Page Up/Down ride the key channel (supported by every input backend on win/mac/linux).
     const pageUp = holdBtn(iconBtn("page-up", "", "wd-btn wd-icon-only"), () =>
       conn.send({ type: "key", key: "PageUp" }),
@@ -1302,6 +1302,7 @@ export class Controls {
     this.promptInput.addEventListener("input", () => {
       this.histIndex = -1;
       this.updateHistButtons();
+      this.syncPromptHeight();
     });
 
     // History recall (mobile has no ↑/↓ keys): a tiny stacked column — prev on top, next below —
@@ -1432,6 +1433,7 @@ export class Controls {
     const end = text.length;
     ta.setSelectionRange(end, end);
     ta.focus();
+    this.syncPromptHeight();
   }
 
   /** Insert whip text at the cursor of the Type textarea (replacing any selection). */
@@ -1443,6 +1445,17 @@ export class Controls {
     const pos = start + text.length;
     ta.setSelectionRange(pos, pos);
     ta.focus();
+    this.syncPromptHeight();
+  }
+
+  /** Chat-style auto-grow: the Type box tracks its draft up to the CSS max-height, then scrolls.
+   * Growing first matters on iOS, where panning a small overflowing textarea inside the fixed
+   * ribbon is unreliable — this keeps most drafts fully visible with no scrolling needed at all.
+   * (+2 covers the 1px borders; height is border-box.) */
+  private syncPromptHeight(): void {
+    const ta = this.promptInput;
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight + 2}px`;
   }
 
   private buildMonitorPane(): HTMLElement {
@@ -1550,5 +1563,6 @@ export class Controls {
     this.histIndex = -1;
     this.histDraft = "";
     this.updateHistButtons();
+    this.syncPromptHeight();
   }
 }
