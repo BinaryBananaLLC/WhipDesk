@@ -100,7 +100,7 @@ function updateHelpLines(): string[] {
     "Updating:",
     "  Re-run the installer - it replaces any older copy in place and keeps your settings:",
     `    ${updateCommand()}`,
-    "  Installed with Homebrew or npm? Use 'brew upgrade --cask whipdesk' or 'npm update -g whipdesk'.",
+    "  Installed with Homebrew or npm? Use 'brew upgrade --cask whipdesk' or 'npm install -g whipdesk'.",
   ];
 }
 
