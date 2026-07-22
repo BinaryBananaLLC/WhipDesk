@@ -95,7 +95,7 @@ export function announceUpdate(latest: string, current: string, notify: (n: { ti
   log.info(`update available: v${latest} (running v${current}) — https://github.com/BinaryBananaLLC/WhipDesk/releases/latest`);
   notify({
     title: "WhipDesk update available",
-    body: `v${latest} is out (you're on v${current}). Update with your installer — npm/brew/scoop — or the releases page. One-liners per method: whipdesk.com or docs/UPDATING.md.`,
+    body: `v${latest} is out (you're on v${current}). Update with your installer — npm/brew/winget/scoop — or the releases page. One-liners per method: whipdesk.com or docs/UPDATING.md.`,
     level: "info",
     source: "update",
   });

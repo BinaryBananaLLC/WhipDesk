@@ -46,6 +46,7 @@ startup and is shown in the controller's Connection dialog.
 | --- | --- |
 | **npm** (`npm i -g whipdesk`) | `npm install -g whipdesk@latest` |
 | **Homebrew** (macOS) | `brew update && brew upgrade --cask whipdesk` |
+| **winget** (Windows) | `winget upgrade BinaryBanana.WhipDesk` |
 | **Scoop** (Windows) | `scoop update whipdesk` |
 | **Quick-install script** | Re-run it — it always fetches the latest signed release:<br>`curl -fsSL https://whipdesk.com/install.sh \| bash` (macOS/Linux)<br>`powershell -c "irm https://whipdesk.com/install.ps1 \| iex"` (Windows) |
 | **`.pkg` / `.exe` / `.zip` / `.tar.gz` download** | Download the latest from the [releases page](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest) and install over the top (the `.pkg`/`.exe` installers handle replacement; for the portable `.zip`/`.tar.gz`, overwrite the old files). |

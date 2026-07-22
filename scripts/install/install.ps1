@@ -70,7 +70,7 @@ function Get-Verified([string]$asset) {
   return $file
 }
 
-# Remove WhipDesk copies installed by OTHER channels (Scoop, npm -g). Each drops its own whipdesk.exe
+# Remove WhipDesk copies installed by OTHER channels (Scoop, winget, npm -g). Each drops its own whipdesk.exe
 # into a directory that may sit ahead of ours on PATH, so `whipdesk` would keep resolving to the OLD
 # version even after we install the new one - and users have no reason to know they must uninstall it
 # first. This also stops the old copy's updater from nagging. Every step is guarded: a failure here
@@ -91,6 +91,18 @@ function Remove-OldInstalls {
         Get-ChildItem (Join-Path $env:USERPROFILE "scoop\shims") -Filter "whipdesk.*" -ErrorAction SilentlyContinue |
           ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
       } catch { }
+    }
+  }
+  # winget - the portable BinaryBanana.WhipDesk package drops a `whipdesk.exe` alias into the WinGet
+  # Links dir (which is on PATH). Uninstalling clears both the package payload and that alias.
+  $wingetLink = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links\whipdesk.exe"
+  if (Test-Path $wingetLink) {
+    Say "Removing old winget install of WhipDesk"
+    try { if (Get-Command winget -ErrorAction SilentlyContinue) { winget uninstall --id BinaryBanana.WhipDesk --exact --silent *> $null } } catch { }
+    # If the alias survived (winget missing, or the uninstall was blocked by a running old agent),
+    # delete it directly so it can't keep shadowing the new copy on PATH.
+    if (Test-Path $wingetLink) {
+      try { Remove-Item $wingetLink -Force -ErrorAction SilentlyContinue } catch { }
     }
   }
   # npm global - an old `npm install -g whipdesk` puts whipdesk shims in the npm prefix root.

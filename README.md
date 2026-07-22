@@ -69,6 +69,9 @@ npm install -g whipdesk
 # or Quick install
 powershell -c "irm https://whipdesk.com/install.ps1 | iex"
 
+# or winget
+winget install BinaryBanana.WhipDesk
+
 # or Scoop
 scoop install whipdesk
 ```

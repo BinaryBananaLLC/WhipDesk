@@ -525,8 +525,9 @@ jobs:
     name: Update winget manifest
     # Publishes the Windows zip as a winget "portable" package (BinaryBanana.WhipDesk) via a PR to
     # microsoft/winget-pkgs. Needs WINGET_TOKEN (a classic PAT with public_repo on a fork of
-    # winget-pkgs) — no-ops with a warning until configured. The FIRST version must be submitted
-    # manually with `wingetcreate new` (see docs/RELEASING.md); this job automates every update.
+    # winget-pkgs) — no-ops with a warning until configured. The package is already live in
+    # winget-pkgs (bootstrapped by PR microsoft/winget-pkgs#398293); this job opens the update PR
+    # for every new release, so no manual `wingetcreate` step is needed anymore.
     needs: [resolve, release]
     if: ${{ needs.resolve.outputs.prerelease == 'false' }}
     runs-on: windows-latest
