@@ -1,6 +1,6 @@
 {
   "name": "whipdesk",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "module",
   "description": "WhipDesk desktop host: screen capture, input injection, notification hub, and the HTTP/WebSocket server that serves the mobile client.",
   "license": "AGPL-3.0",
