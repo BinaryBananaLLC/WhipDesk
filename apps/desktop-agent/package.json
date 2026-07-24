@@ -2,7 +2,7 @@
   "name": "whipdesk",
   "version": "1.0.5",
   "type": "module",
-  "description": "WhipDesk desktop host: screen capture, input injection, notification hub, and the HTTP/WebSocket server that serves the mobile client.",
+  "description": "Open-source remote access for AI coding agents and dev machines, controlled from a phone.",
   "license": "AGPL-3.0",
   "homepage": "https://whipdesk.com",
   "repository": {

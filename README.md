@@ -1,8 +1,8 @@
 <div align="center">
 
 
-<h1>WhipDesk — Control AI Coding Agents From Anywhere</h1>
-<h3>A secure, open-source remote access tool for vibecoders on the go</h3>
+<h1>WhipDesk — Control AI Coding Agents From Your Phone</h1>
+<h3>Open-source, end-to-end encrypted access to your entire dev machine from a mobile browser</h3>
 
 [![CI](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/BinaryBananaLLC/WhipDesk/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/BinaryBananaLLC/WhipDesk)](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest)
@@ -14,25 +14,68 @@
 
 <img src="https://whipdesk.com/art-optimized/site_poster.webp" alt="WhipDesk - your AI coding agents, controlled from your phone" width="720" />
 
-[WhipDesk.com](https://whipdesk.com) · [Install](#up-and-running-in-seconds) · [Features](#what-makes-whipdesk-unique) · [How it works](#how-it-works) · [FAQ](https://whipdesk.com/faq/)
+[WhipDesk.com](https://whipdesk.com) · [Security](#security-you-can-verify) · [Install](#up-and-running-in-seconds) · [Features](#what-makes-whipdesk-unique) · [How it works](#how-it-works) · [FAQ](https://whipdesk.com/faq/)
 
 
 </div>
 
-WhipDesk is a **mobile-first remote access tool** designed specifically for developers who need to oversee and manage AI coding agents running on their dev machines—**directly from their phones**.
+WhipDesk is a **remote access tool for developers** who need to monitor and control AI coding agents running on their dev machines—**directly from their phones**. 
 
-## Why WhipDesk?
+The agent you install on your dev machine and the controller that runs in your browser are both open source, and the connection between them is end-to-end encrypted. You get the whole machine, not one chat window: manage your AI agents, test the changes they made, review the code, and keep working from your phone.
 
-Modern AI workflows require more than traditional tools can offer:
 
-- **Beyond the Terminal:** Terminal-only apps limit you to agent chats only. WhipDesk gives you **full access to your entire desktop** and development environment so you can view code changes, inspect UI fixes, and run any desktop app.
-- **Built for Mobile & AI:** Traditional remote desktop tools are notoriously clunky on small screens with very limited support for reading text, and weren't built with AI agents in mind. WhipDesk is tailored for mobile-first control, letting you effortlessly monitor, guide, and course-correct your vibecoding sessions from anywhere.
 
-<div align="center">
-<img src="https://whipdesk.com/art/readme/info_image.png" alt="WhipDesk - full access to entire desktop" width="720" />
-</div>
+## WhipDesk vs. Claude Code Remote, Codex Remote, and SSH + tmux
 
-**Free, open-source, and end-to-end encrypted**. WhipDesk works entirely on your local network without any account—or from anywhere in the world with a free sign-in at [WhipDesk.com](https://whipdesk.com).
+|  | WhipDesk | Claude Code | Codex | SSH + tmux |
+|---|:---:|:---:|:---:|:---:|
+| Full desktop control | ✅ | ❌ | ❌ | ❌ |
+| Run and test what you built | ✅ | ❌ | ❌ | Terminal only |
+| Run prompts at a scheduled time | ✅ | ❌ | ❌ | ❌ |
+| Open source | ✅ | ❌ | ❌ | ✅ |
+
+> WhipDesk lets you control every AI agent—Claude Code, Codex, Copilot, Cursor and more—from one view in your mobile browser, and adds tools built for that, like a prompt scheduled to fire at 3am when your session resets. 
+
+<details><summary>Sources</summary>
+
+[Codex remote connections](https://learn.chatgpt.com/docs/remote-connections), [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control). *Compared against vendor documentation, July 2026.*
+
+</details>
+
+## WhipDesk vs TeamViewer vs RustDesk
+
+|  | WhipDesk | TeamViewer | RustDesk |
+|---|:---:|:---:|:---:|
+| Full desktop control | ✅ | ✅ | ✅ |
+| Built for reading code on a phone | ✅ | ❌ | ❌ |
+| Knows when your agent is stuck | ✅ | ❌ | ❌ |
+| Agent alerts and scheduled prompts | ✅ | ❌ | ❌ |
+| Open source | ✅ | ❌ | ✅ |
+| Free to use | ✅ | Personal, non-commercial use only | Free, but you host the server |
+| Enterprise support | ❌ | Paid add-ons | Paid (Server Pro) |
+
+> TeamViewer and RustDesk are general-purpose remote access tools. WhipDesk is purpose-built for developers - with a mobile-first interface designed for small screens and workflows centered around monitoring and controlling AI agents on your dev machine.
+
+<details><summary>Sources</summary>
+
+[TeamViewer pricing](https://www.teamviewer.com/en-us/pricing/), [RustDesk pricing](https://rustdesk.com/pricing/), [RustDesk self-hosting](https://rustdesk.com/docs/en/self-host/). *Compared against vendor documentation, July 2026.*
+
+</details>
+
+## Security you can verify
+
+Remote access requires trust. Here is exactly what you are trusting, and where to check it.
+
+- **Open source on both ends.** Every WhipDesk component installed on the dev machine is in this repository, as is the controller that runs the remote session in your browser. Read it, audit it, or point your own AI agent at it.
+- **End-to-end encrypted sessions.** Sessions run over WebRTC, so encryption is enforced by the protocol itself. There is no unencrypted mode to switch to, for us or for anyone else.
+- **Direct when possible, encrypted always.** Connections prefer your LAN or a direct peer-to-peer path. When a network blocks that, traffic falls back to an encrypted TURN relay that only forwards sealed packets it cannot open.
+- **PIN before the first frame.** A pairing token and a PIN challenge are required before a single screen frame is sent. The agent stores only a salted, stretched key; the controller computes a one-time response in memory. The PIN never crosses the wire.
+- **What the hosted service sees.** If you use WhipDesk.com for discovery, hosted services process the account, device, connection, abuse-prevention, and minimal diagnostic metadata described in the [privacy policy](https://whipdesk.com/privacy/). They never receive remote-session screen contents, control input, file contents, or PINs. A LAN connection needs no account or hosted discovery.
+- **Builds you can verify.** Every release is built by GitHub Actions straight from the tagged source, with published checksums and build provenance. macOS builds are signed with a Developer ID and notarized by Apple. Windows builds are **not code-signed yet**—SmartScreen will warn, but you can [verify the download](docs/VERIFYING-DOWNLOADS.md) before clicking through.
+
+Read the details: [SECURITY.md](SECURITY.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) · [docs/VERIFYING-DOWNLOADS.md](docs/VERIFYING-DOWNLOADS.md)
+
+Found a vulnerability? Please open a [GitHub security advisory](https://github.com/BinaryBananaLLC/WhipDesk/security/advisories/new) instead of a public issue. Good-faith security research is always welcome and appreciated.
 
 ## Up and running in seconds
 
@@ -76,7 +119,7 @@ winget install BinaryBanana.WhipDesk
 scoop install whipdesk
 ```
 
-There's also a `-setup.exe` wizard on the [latest release](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest). Windows builds aren't code-signed yet, so SmartScreen will warn — [verify the download](docs/VERIFYING-DOWNLOADS.md) before you click through.
+There's also a `-setup.exe` wizard on the [latest release](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest).
 
 #### Linux
 
@@ -110,25 +153,21 @@ Scan the QR code printed in the terminal, open the link, enter your PIN, and con
 #### From anywhere
 To connect your devices outside of your local network, they need a way to find each other. Sign in with the same email address on [WhipDesk.com](https://whipdesk.com) and in the agent during setup. Your dev machines will immediately appear in your [dashboard](https://whipdesk.com/dashboard/), ready to connect from anywhere in the world. WhipDesk.com handles device discovery, signaling, and optional push notifications.
 
-**You are now ready to whip lazy AI back to work!**
 
-<div align="center">
-<img src="https://whipdesk.com/art-optimized/readme1.webp" alt="WhipDesk — control AI coding agents from anywhere" width="720" />
-</div>
 
 ## How it works
 
 The WhipDesk agent runs on your dev machine much like a typical remote access app. It captures the screen, accepts real mouse and keyboard control, and serves the web app your phone loads.
 
-### On your local network
-Your phone and the agent connect directly over WebRTC — DTLS-encrypted, phone-to-desktop, with nothing in between. The entire logic behind this connection lives in this repository.
+<div align="center">
+<img src="https://whipdesk.com/art/readme/info_image.png" alt="WhipDesk - full access to entire desktop" width="720" />
+</div>
 
-### Outside your local network
-Away from home, your phone and your dev machine have no way to find each other on their own — that's the one job an external service has to do. Sign in, and WhipDesk.com introduces the two devices; the session itself **always stays end-to-end encrypted** between them. Most connections then flow directly peer-to-peer. When NAT traversal fails, traffic falls back to a secure TURN relay that only forwards sealed packets it cannot read.
+**On your local network,** your phone and the agent connect directly over WebRTC — DTLS-encrypted, phone-to-desktop, with nothing in between. The entire logic behind this connection lives in this repository.
 
-Either way, every connection must answer your PIN before the screen starts—and **the PIN itself never crosses the wire**. Design details live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and our threat model in [SECURITY.md](SECURITY.md).
+**Outside your local network,** your phone and your dev machine have no way to find each other on their own — that's the one job an external service has to do. Sign in, and WhipDesk.com introduces the two devices; the session itself stays end-to-end encrypted between them. Most connections then flow directly peer-to-peer, and the rest fall back to the relay described above.
 
-
+Either way, every connection must answer your PIN before the screen starts. Design details live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the threat model in [SECURITY.md](SECURITY.md).
 
 ## What makes WhipDesk unique
 
@@ -149,7 +188,7 @@ WhipDesk is packed with the tools we use every single day to keep our own agents
 - **Bypassing repetition:** We kept retyping the same exact instructions, so we built the Whipository. Now, commands like "make no mistakes" or "run the tests" are one tap away.
 - **Automating rituals:** Click a window, focus the prompt, type, press Enter, unlock the dev box at night. That's why LashStash exists—to handle daily UI automation without manual intervention.
 
-While WhipDesk is built mobile-first and optimized for managing AI agents, it's also incredibly useful for general remote access. Need to quickly check an order on a website where you're already signed in on your dev machine? Just connect via WhipDesk. Let us know if you find interesting new use cases, or if you're missing a feature!
+While WhipDesk is built mobile-first and optimized for managing AI agents, it's also useful for general remote access. Need to quickly check an order on a website where you're already signed in on your dev machine? Just connect via WhipDesk. Let us know if you find interesting new use cases, or if you're missing a feature!
 
 ## Why we built it
 
@@ -161,15 +200,13 @@ LAN usage costs us nothing, which is why this repository contains everything you
 
 ## Privacy and telemetry
 
-Sessions are end-to-end encrypted between your devices. If you sign in with WhipDesk.com, it sees only what it absolutely needs to connect your devices: your email address, device name, platform/version, online status, and connection handshake metadata.
-
 The agent contains **no analytics and no tracking**. Its only unprompted network call is the update check, which sends just the running version and OS platform. You can turn the update check off in `~/.whipdesk/settings.json` (`%USERPROFILE%\.whipdesk\settings.json` on Windows):
 
 ```json
 { "updateCheck": false }
 ```
 
-Every release is built by GitHub Actions straight from the tagged source—signed, notarized, and [verifiable](docs/VERIFYING-DOWNLOADS.md). WhipDesk alerts you when an update ships but never auto-updates (see [how to update](docs/UPDATING.md)).
+WhipDesk alerts you when an update ships but never auto-updates (see [how to update](docs/UPDATING.md)).
 
 Don't take our word for it—the code is right here. Read it, audit it, or point your favorite AI agent at it for a security review.
 
@@ -200,17 +237,17 @@ npm run test
 
 LAN mode is fully self-contained in this repo, and the remote path is well-documented to inspect, review, and extend. If you want to build on top of WhipDesk or point it at your own backend, start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [SECURITY.md](SECURITY.md), and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
 
-## Reporting security issues
-
-Found a vulnerability? Please open a [GitHub security advisory](https://github.com/BinaryBananaLLC/WhipDesk/security/advisories/new) instead of a public issue. Good-faith security research is always welcome and appreciated.
-
 ## License
 
 [GNU AGPL-3.0](LICENSE) — run it, study it, modify it, and share it. If you offer a modified version as a network service, the AGPL requires publishing your source under the same license. For commercial licensing, contact BinaryBanana LLC.
 
 The WhipDesk name and logo are trademarks of BinaryBanana LLC. Forks need their own branding; see [TRADEMARK.md](TRADEMARK.md).
 
-## Star history
+<div align="center">
+<img src="https://whipdesk.com/art-optimized/readme1.webp" alt="WhipDesk — any agent, your whole dev machine, from your phone" width="720" />
+</div>
+
+<!-- ## Star history
 
 <a href="https://star-history.com/#BinaryBananaLLC/WhipDesk&Date">
  <picture>
@@ -218,4 +255,4 @@ The WhipDesk name and logo are trademarks of BinaryBanana LLC. Forks need their 
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=BinaryBananaLLC/WhipDesk&type=Date" />
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=BinaryBananaLLC/WhipDesk&type=Date" />
  </picture>
-</a>
+</a> -->

@@ -128,7 +128,7 @@ function printUninstallInfo(): void {
 function printHelp(): void {
   console.log(
     [
-      `WhipDesk ${AGENT_VERSION} - remote desktop for checking on your machines and the AI agents running on them.`,
+      `WhipDesk ${AGENT_VERSION} - open-source remote access for AI coding agents and dev machines, controlled from a phone.`,
       "",
       "Usage:",
       "  whipdesk [options]",

@@ -2,7 +2,7 @@
   "name": "whipdesk",
   "version": "0.1.0",
   "private": true,
-  "description": "WhipDesk — lightweight peer-to-peer remote desktop + AI-status notifications, controllable from a mobile browser.",
+  "description": "Open-source remote access for AI coding agents and dev machines, controlled from a phone.",
   "license": "AGPL-3.0",
   "homepage": "https://github.com/BinaryBananaLLC/WhipDesk#readme",
   "repository": {

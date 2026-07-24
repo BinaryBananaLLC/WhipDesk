@@ -5,17 +5,17 @@ Design seams and the non-obvious "why". Wire message shapes are not here — the
 
 ## Transport seam (most important)
 
-A *transport* is a bidirectional channel carrying control messages (JSON, both ways) and
-screen frames (host→controller). Two impls emit identical events so nothing outside
-`transport/` branches on transport type:
+A *transport* is a bidirectional WebRTC session carrying control messages over a DataChannel and
+H.264 screen video from host to controller. LAN and remote sessions share the same controller
+session; only discovery, signaling, and ICE configuration differ:
 
-- **WebSocket** (`transport/websocket.ts`) — LAN. Binary `ws` frames = JPEG; text = JSON.
-- **WebRTC** (`transport/webrtc.ts`) — remote. werift (pure-TS, no native build), one
-  DataChannel for control + an H.264 video track for the screen; DTLS encrypts everything.
-  Signaling (`signaling/edge.ts`) swaps one SDP offer/answer over the agent's WebSocket to the
-  WhipDesk edge (`cloud/edge.ts` — the same always-open socket that IS the machine's "online"
-  presence); the media path is then pure P2P. STUN-first, ephemeral-credential TURN as fallback
-  (`cloud/ice.ts`).
+- **LAN signaling** (`transport/websocket.ts`) — a local WebSocket exchanges the WebRTC
+  offer/answer and candidates. ICE uses host candidates only (`iceServers: []`), so LAN sessions
+  never use hosted STUN/TURN. Screen and control traffic then flow directly over WebRTC.
+- **Remote signaling** (`transport/webrtc.ts`, `signaling/edge.ts`) — werift (pure-TS, no native
+  build) answers an offer delivered over the agent's WebSocket to the WhipDesk edge
+  (`cloud/edge.ts` — the same always-open socket that represents the machine's online presence).
+  STUN is tried first, with ephemeral-credential TURN as the encrypted fallback (`cloud/ice.ts`).
 
 Both run through one shared controller `session` (`transport/session.ts`): token gate → PIN
 challenge → only then is the controller authorized and the screen starts.
@@ -29,17 +29,11 @@ math. The renderer derives display scale from the frame's natural size.
 
 ## Capture
 
-`capture/screen.ts` samples the active display; `capture/displays.ts` enumerates monitors and
-maps cross-monitor geometry (macOS NSScreen Cocoa→Quartz origin flip). Two output paths:
-
-- **LAN / JPEG**: single-frame sampler — `screenshot-desktop` on macOS/Linux, the bundled ffmpeg
-  (ddagrab/gdigrab, `capture/win-capture.ts`) on Windows so the Windows build ships no
-  `screenshot-desktop` (its csc-compiled win32 helper trips AV/winget validation scans). Optional
-  `sharp` downsizes + re-encodes and, on zoom, crops to just the visible region (`set-viewport`)
-  to save bandwidth. Windows monitors enumerate natively via `capture/displays-win.ts`.
-- **Remote / H.264**: `capture/encoder.ts` (ffmpeg/VideoToolbox → werift track) with a JPEG
-  fallback when no usable H.264 encoder exists. A low-res "overview" track feeds the minimap
-  when zoomed. The encoder applies the zoom crop as a filter.
+`capture/displays.ts` enumerates monitors and maps cross-monitor geometry (macOS NSScreen
+Cocoa→Quartz origin flip). Both LAN and remote sessions use `capture/encoder.ts`
+(ffmpeg/VideoToolbox → WebRTC H.264 track); there is no JPEG fallback. A low-res overview track
+feeds the minimap while zoomed, and the encoder applies the zoom crop as a filter. Windows
+monitors enumerate natively via `capture/displays-win.ts`.
 
 The loop is self-pacing, skips unchanged frames, and pauses when no controller is visible.
 
@@ -88,6 +82,6 @@ input injection) granted to the launching terminal app; restart it after grantin
 
 ## Why these choices
 
-WebSocket first = zero native pain, bulletproof on LAN. WebRTC for remote = encrypted,
-serverless data path; only the handshake touches the cloud. Vanilla-TS PWA = smallest surface,
-Tauri-wrappable later without a rewrite.
+WebRTC on both LAN and remote paths keeps the screen and control channel encrypted and gives both
+paths the same session behavior. LAN signaling stays local; remote signaling uses the edge only
+to introduce peers. Vanilla-TS PWA = smallest surface, Tauri-wrappable later without a rewrite.

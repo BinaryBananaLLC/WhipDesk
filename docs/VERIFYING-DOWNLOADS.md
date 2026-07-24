@@ -1,6 +1,5 @@
 # Verifying WhipDesk downloads
 
-WhipDesk can control your machine, so **prove a download came from this repo's source before you run it.**
 Every release asset is built by GitHub Actions from the tagged commit and carries a cryptographic
 [build-provenance attestation](https://docs.github.com/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds).
 None of this requires trusting a mirror or a hosted binary — the checks below tie the exact bytes you
