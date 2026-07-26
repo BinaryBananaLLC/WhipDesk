@@ -50,9 +50,8 @@ decisions when appropriate.
 
 ## Scope
 
-This Code of Conduct applies within all community spaces (the GitHub repository,
-[r/WhipDesk](https://www.reddit.com/r/WhipDesk/), and any official chat), and
-also applies when an individual is officially representing the community in
+This Code of Conduct applies within the GitHub repository and any official chat,
+and also applies when an individual is officially representing the community in
 public spaces.
 
 ## Enforcement
@@ -61,8 +60,7 @@ Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the maintainers:
 
 * publicly, via a [GitHub issue](https://github.com/BinaryBananaLLC/WhipDesk/issues), or
-* privately, via modmail to the moderators of
-  [r/WhipDesk](https://www.reddit.com/r/WhipDesk/).
+* privately, by emailing contact@whipdesk.com.
 
 All complaints will be reviewed and investigated promptly and fairly. All
 community leaders are obligated to respect the privacy and security of the

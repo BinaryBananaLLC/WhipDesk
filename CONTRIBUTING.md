@@ -33,7 +33,7 @@ Node ≥ 20. macOS, Windows, and Linux are all first-class; CI runs the suite on
 - Bugs → [GitHub issues](https://github.com/BinaryBananaLLC/WhipDesk/issues) (template provided).
 - Security vulnerabilities → a [private security advisory](https://github.com/BinaryBananaLLC/WhipDesk/security/advisories/new),
   never a public issue. See [SECURITY.md](SECURITY.md).
-- Ideas and questions → [r/WhipDesk](https://www.reddit.com/r/WhipDesk/) or a GitHub discussion/issue.
+- Ideas and questions → a [GitHub discussion](https://github.com/BinaryBananaLLC/WhipDesk/discussions), issue, or pull request. Email contact@whipdesk.com only if GitHub is not an option.
 
 ## License and the CLA
 

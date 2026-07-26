@@ -1856,7 +1856,7 @@ textarea {
   align-self: center;
   margin-top: 0;
 }
-/* Feedback footer in the connection dialog — one short line + Reddit / GitHub buttons. */
+/* Feedback footer in the connection dialog. */
 .wd-conn-feedback {
   margin-top: 14px;
   padding-top: 12px;

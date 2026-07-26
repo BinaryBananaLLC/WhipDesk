@@ -222,7 +222,7 @@ whipdesk --verbose
 
 Run `whipdesk --help` for the full list of flags.
 
-If the problem persists, open an issue on [GitHub](https://github.com/BinaryBananaLLC/WhipDesk/issues) or post on [Reddit](https://www.reddit.com/r/WhipDesk/).
+If the problem persists, open an issue on [GitHub](https://github.com/BinaryBananaLLC/WhipDesk/issues). If GitHub is not an option, email contact@whipdesk.com.
 
 ## Contributing
 

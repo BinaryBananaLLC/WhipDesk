@@ -62,4 +62,3 @@ export function signInUrl(next?: string): string {
 
 // Where users report issues / share ideas. Kept in sync with the marketing site's src/lib/links.ts.
 export const GITHUB_URL = "https://github.com/BinaryBananaLLC/WhipDesk/";
-export const REDDIT_URL = "https://www.reddit.com/r/WhipDesk/";

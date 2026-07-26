@@ -12,7 +12,7 @@ import type { RegionWatchers } from "./watchers";
 import type { Whipository } from "./whipository";
 import { icon, type IconName } from "./icons";
 import { PromptHistory } from "./promptHistory";
-import { DONATE_URL, GITHUB_URL, REDDIT_URL, dashboardUrl } from "./site";
+import { DONATE_URL, GITHUB_URL, dashboardUrl } from "./site";
 import whipositoryMark from "./assets/whipository.png";
 import autoWhipsIcon from "./assets/auto-whips-icon.png";
 
@@ -120,7 +120,7 @@ function whipButton(onClick: () => void): HTMLButtonElement {
   return b;
 }
 
-/** An icon + label anchor that opens an external page (Reddit/GitHub) safely in a new tab. */
+/** An icon + label anchor that opens an external page safely in a new tab. */
 function feedbackLink(name: IconName, label: string, href: string): HTMLAnchorElement {
   const a = el("a", "wd-conn-feedback-link");
   a.href = href;
@@ -417,16 +417,12 @@ export class Controls {
     donate.onclick = () => window.open(DONATE_URL, "_blank", "noopener");
     support.appendChild(donate);
 
-    // Found a bug or have an idea? This dialog is where engaged users land, so it's a natural place
-    // to invite reports and point them at the community/repo. Kept to a single line + two buttons so
-    // it stays compact and translates cleanly (no idioms).
+    // Found a bug or have an idea? This dialog is where engaged users land, so point them to the
+    // project. Kept to a single line + button so it stays compact and translates cleanly.
     const feedback = el("div", "wd-conn-feedback");
-    feedback.append(el("p", "wd-conn-feedback-text", "Noticed an issue or have an idea? Reach out:"));
+    feedback.append(el("p", "wd-conn-feedback-text", "Noticed an issue or have an idea? Open a GitHub issue or PR:"));
     const links = el("div", "wd-conn-feedback-links");
-    links.append(
-      feedbackLink("reddit", "Reddit", REDDIT_URL),
-      feedbackLink("github", "GitHub", GITHUB_URL),
-    );
+    links.append(feedbackLink("github", "GitHub", GITHUB_URL));
     feedback.appendChild(links);
 
     // Row order: Status, Connection, Speed, Machine (+HDR note).
