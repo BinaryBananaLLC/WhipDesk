@@ -342,6 +342,12 @@ export class Controls {
     this.updateSwitchPillHint(); // reaching the main monitor (any way) retires the switcher hint
   }
 
+  setDisplays(displays: DisplayInfo[]): void {
+    this.displays = displays;
+    this.renderMonitors();
+    this.updateSwitchPillHint();
+  }
+
   /** Switch which host monitor is captured — shared by the Monitors picker and the switcher hint. */
   private selectDisplay(id: number): void {
     this.deps.conn.send({ type: "select-display", id });

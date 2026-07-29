@@ -103,27 +103,51 @@ export interface OverviewConfig {
 
 // macOS avfoundation lists screen-capture devices AFTER cameras, so the device index for
 // "Capture screen N" is machine-dependent (e.g. the camera is [0] and "Capture screen 0" is [1]).
-// Probe ffmpeg ONCE and map screen N -> device index. Cache the in-flight PROMISE (not the Map) so
-// two near-simultaneous callers can't race: marking the Map "present" before the async probe
-// finished let a second caller read an empty Map and wrongly conclude "no device".
+// Probe ffmpeg and map screen N -> device index. AVFoundation renumbers/removes screen devices when
+// a sleeping monitor disconnects, so this cache MUST expire; keeping the startup map forever sends
+// every post-wake ffmpeg to a dead index ("Invalid device index") until the agent is restarted.
 let avScreenMapPromise: Promise<Map<number, string>> | null = null;
+let avScreenMapAt = 0;
+const AV_SCREEN_MAP_TTL_MS = 15_000;
+
+export function parseAvScreenMap(output: string): Map<number, string> {
+  const map = new Map<number, string>();
+  for (const m of output.matchAll(/\[(\d+)\]\s+Capture screen (\d+)/g)) map.set(Number(m[2]), m[1]!);
+  return map;
+}
+
+export function selectAvScreenIndex(map: Map<number, string>, displayId: number): string | null {
+  return map.get(displayId) ?? map.get(0) ?? map.values().next().value ?? null;
+}
+
+function invalidateAvScreenMap(): void {
+  avScreenMapPromise = null;
+  avScreenMapAt = 0;
+}
+
 async function avScreenIndex(displayId: number): Promise<string | null> {
   if (process.platform !== "darwin" || !ffmpegPath) return null;
+  if (avScreenMapAt > 0 && Date.now() - avScreenMapAt >= AV_SCREEN_MAP_TTL_MS) {
+    invalidateAvScreenMap();
+  }
   if (!avScreenMapPromise) {
-    avScreenMapPromise = (async () => {
-      const map = new Map<number, string>();
+    const probe = (async () => {
       try {
         // This intentionally fails (no real input) but prints the device list to stderr.
         await exec(ffmpegPath!, ["-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""]);
       } catch (error) {
         const out = String((error as { stderr?: string }).stderr ?? "");
-        for (const m of out.matchAll(/\[(\d+)\]\s+Capture screen (\d+)/g)) map.set(Number(m[2]), m[1]!);
+        return parseAvScreenMap(out);
       }
-      return map;
+      return new Map<number, string>();
     })();
+    avScreenMapPromise = probe;
+    void probe.then(() => {
+      if (avScreenMapPromise === probe) avScreenMapAt = Date.now();
+    });
   }
   const map = await avScreenMapPromise;
-  return map.get(displayId) ?? map.get(0) ?? null;
+  return selectAvScreenIndex(map, displayId);
 }
 
 /** How to feed one platform's screen into ffmpeg: the input-side args plus any filter chain needed
@@ -309,7 +333,11 @@ export class ScreenCaptureSession {
   /** Give up on a capture that has NEVER produced a frame after this many restarts (permission). */
   private static readonly MAX_DEAD_RESTARTS = 2;
 
-  constructor(private cfg: CaptureConfig, private readonly onError?: () => void) {}
+  constructor(
+    private cfg: CaptureConfig,
+    private readonly onError?: () => void,
+    private readonly onCaptureDevicesChanged?: () => void,
+  ) {}
 
   onRtp(cb: (packet: Buffer) => void): void {
     this.listener = cb;
@@ -357,6 +385,17 @@ export class ScreenCaptureSession {
     const enc = await pickH264Encoder();
     const capture = await captureDeviceFor(cfg.displayIndex, cfg.fps, this.winCaptureFallback);
     if (!enc || !ffmpegPath || !capture) {
+      if (process.platform === "darwin" && enc && ffmpegPath && !capture) {
+        // During display wake AVFoundation can briefly publish no screen devices. Treat that as a
+        // transient topology change, not a permanent permission failure.
+        invalidateAvScreenMap();
+        this.onCaptureDevicesChanged?.();
+        const retry = setTimeout(() => {
+          if (!this.stopped) void this.restart();
+        }, 1500);
+        retry.unref?.();
+        return false;
+      }
       if (!capture) log.warn("no direct screen-capture device on this platform — screen sharing unavailable");
       this.fail();
       return false;
@@ -457,6 +496,7 @@ export class ScreenCaptureSession {
     this.spawnAt = Date.now();
     this.lastPacketAt = Date.now();
     this.spawnGotPacket = false;
+    let captureDeviceErrorSeen = false;
     // The crop THIS spawn encodes; the first packet means its frames are now LIVE on the wire.
     const spawnCrop = cfg.crop;
     let firstPacket = true;
@@ -499,6 +539,13 @@ export class ScreenCaptureSession {
           /AcquireNextFrame failed|Output parameters changed|Requested output format unavailable/i.test(t)
         ) {
           invalidateHdrCache();
+        }
+        if (process.platform === "darwin" && /Invalid device index/i.test(t)) {
+          invalidateAvScreenMap();
+          if (!captureDeviceErrorSeen) {
+            captureDeviceErrorSeen = true;
+            this.onCaptureDevicesChanged?.();
+          }
         }
         log.debug("ffmpeg:", t.slice(0, 200));
       }
@@ -736,6 +783,8 @@ export interface VideoHubOptions {
   overview?: OverviewConfig | null;
   /** Fired when the capture gives up producing frames (e.g. no Screen Recording permission). */
   onError?: () => void;
+  /** Fired when the OS capture-device inventory changed after sleep/wake or a hot-plug. */
+  onCaptureDevicesChanged?: () => void;
   /** Fired when a (re)cropped capture's first frame reaches the wire — the new region is now LIVE. */
   onCropActive?: (crop: Region | null) => void;
 }
@@ -849,6 +898,7 @@ export class VideoHub {
           overview: this.opts.overview ?? null,
         },
         this.opts.onError,
+        this.opts.onCaptureDevicesChanged,
       );
       session.onRtp((p) => this.fan(p));
       session.onOverviewRtp((p) => this.fanOverview(p));

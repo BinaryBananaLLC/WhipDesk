@@ -470,8 +470,12 @@ async function start(): Promise<void> {
     view.setOverviewSource(overviewEl);
   });
   conn.on("netStats", ({ fps, rtt }) => controls.setNetStats(fps, rtt));
-  conn.on("screenMeta", ({ screen, activeDisplay }) => {
+  conn.on("screenMeta", ({ screen, activeDisplay, displays }) => {
     view.setScreen(screen);
+    if (displays) {
+      controls.setDisplays(displays);
+      lashstash.setDisplays(displays);
+    }
     if (activeDisplay !== undefined) {
       controls.setActiveDisplay(activeDisplay);
       lashstash.setActiveDisplay(activeDisplay);

@@ -588,6 +588,8 @@ export interface ScreenMetaMessage {
   screen: ScreenInfo;
   /** Present when the change was a display switch. */
   activeDisplay?: number;
+  /** Present when the host re-enumerated displays after sleep/wake or a hot-plug. */
+  displays?: DisplayInfo[];
 }
 
 /**

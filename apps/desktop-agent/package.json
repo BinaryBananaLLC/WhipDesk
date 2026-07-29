@@ -29,7 +29,7 @@
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/security/pin.test.ts src/monitor/state.test.ts src/transport/session.test.ts",
+    "test": "tsx --test src/security/pin.test.ts src/monitor/state.test.ts src/transport/session.test.ts src/capture/encoder.test.ts",
     "build:bundle": "node scripts/build-bundle.mjs",
     "build:sea": "node scripts/build-sea.mjs",
     "check:install-clean": "node scripts/check-install-clean.mjs",

@@ -8,7 +8,7 @@ import { hostname } from "node:os";
 import { safeEqual } from "./transport/session";
 import { AGENT_VERSION, loadConfig, loadMachineName, saveMachineName, type AgentConfig } from "./config";
 import { ScreenCapturer, isFullViewport, type Viewport } from "./capture/screen";
-import { listDisplayGeometry, type DisplayGeometry } from "./capture/displays";
+import { listDisplayGeometry, toDisplayInfo, type DisplayGeometry } from "./capture/displays";
 import { selectInputBackend, type InputBackend } from "./input";
 import { NotificationHub } from "./notifications";
 import { RegionWatcher } from "./watchers/region";
@@ -191,7 +191,63 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
   // When the last set-viewport re-crop was requested, so we can log how long the host took to make
   // that region LIVE (the variable we replaced the controller's blind 500ms region-bridge timer with).
   let cropRequestedAt = 0;
-  const video = videoAvailable
+  let video: VideoHub | null = null;
+  let displayRefresh: Promise<void> | null = null;
+  let displayRefreshQueued = false;
+  const refreshDisplays = (): Promise<void> => {
+    if (displayRefresh) {
+      displayRefreshQueued = true;
+      return displayRefresh;
+    }
+    displayRefresh = (async () => {
+      const fallback = await input.getScreenSize().catch(() => ({ ...screen }));
+      const fresh = await listDisplayGeometry(fallback);
+      if (fresh.length === 0) return;
+
+      const before = displays.map((d) => `${d.id}:${d.name}:${d.primary}:${d.width}x${d.height}`).join("|");
+      const previousActive = activeDisplay;
+      displays.splice(0, displays.length, ...fresh);
+      const nextActive = fresh.some((d) => d.id === previousActive)
+        ? previousActive
+        : (fresh.find((d) => d.primary)?.id ?? fresh[0]!.id);
+      applyActiveDisplay(nextActive);
+
+      if (nextActive !== previousActive) {
+        viewport = { x: 0, y: 0, w: 1, h: 1 };
+        video?.setDisplay(nextActive);
+        regionWatcher.resetBaselines();
+      }
+
+      const after = fresh.map((d) => `${d.id}:${d.name}:${d.primary}:${d.width}x${d.height}`).join("|");
+      if (before !== after || nextActive !== previousActive) {
+        log.info(
+          `displays refreshed: ${fresh.map((d) => `[${d.id}] ${d.name}${d.primary ? "*" : ""} ${d.width}x${d.height}`).join(", ")}`,
+        );
+      }
+      const meta: ServerMessage = {
+        type: "screen-meta",
+        screen: { ...screen },
+        activeDisplay,
+        displays: displays.map(toDisplayInfo),
+      };
+      for (const controller of controllers) controller.send(meta);
+    })()
+      .catch((error) => log.warn("display refresh failed:", (error as Error).message))
+      .finally(() => {
+        displayRefresh = null;
+        if (displayRefreshQueued) {
+          displayRefreshQueued = false;
+          void refreshDisplays();
+        }
+      });
+    return displayRefresh;
+  };
+  const scheduleDisplayRefresh = (delayMs: number): void => {
+    const timer = setTimeout(() => void refreshDisplays(), delayMs);
+    timer.unref?.();
+  };
+
+  video = videoAvailable
     ? new VideoHub({
         displayIndex: () => activeDisplay,
         fps: DEFAULTS.VIDEO_FPS,
@@ -217,6 +273,12 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
             level: "error",
             source: "capture",
           });
+        },
+        // AVFoundation publishes a new device inventory after monitor sleep/wake. Refresh both the
+        // capture selection and the controller's monitor picker when ffmpeg detects renumbering.
+        onCaptureDevicesChanged: () => {
+          void refreshDisplays();
+          scheduleDisplayRefresh(1500);
         },
       })
     : null;
@@ -558,6 +620,10 @@ export async function startAgent(): Promise<{ server: Server; config: AgentConfi
       // The controller just passed token + PIN: wake the display so they can reach the lock screen
       // (and keep it on while they're connected). Synthetic input alone won't wake a slept panel.
       displayWake.setActive(true);
+      // A monitor may have disappeared while nobody was connected, and a just-woken display can
+      // take a beat to re-register. Re-enumerate now and once after wake has settled.
+      void refreshDisplays();
+      scheduleDisplayRefresh(1500);
       controller.send({ type: "watchers", regions: regionWatcher.list() });
       updatePresence();
       recomputeVideoPause();

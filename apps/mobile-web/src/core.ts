@@ -2,6 +2,7 @@ import {
   isServerMessage,
   type AgentKind,
   type ClientMessage,
+  type DisplayInfo,
   type Lash,
   type MonitorInfo,
   type MonitorSessionInfo,
@@ -29,7 +30,7 @@ export interface PinRequest {
 export interface ControllerEvents {
   status: ConnectionStatus;
   welcome: WelcomeMessage;
-  screenMeta: { screen: ScreenInfo; activeDisplay?: number };
+  screenMeta: { screen: ScreenInfo; activeDisplay?: number; displays?: DisplayInfo[] };
   screenRegion: { x: number; y: number; w: number; h: number; active?: boolean };
   /** The main H.264 desktop track (full desktop, or the host's sharp crop when zoomed), or null. */
   videoTrack: MediaStream | null;
@@ -233,7 +234,11 @@ export class ControllerCore {
         this.wrongPin = false;
         break;
       case "screen-meta":
-        this.emit("screenMeta", { screen: message.screen, activeDisplay: message.activeDisplay });
+        this.emit("screenMeta", {
+          screen: message.screen,
+          activeDisplay: message.activeDisplay,
+          displays: message.displays,
+        });
         break;
       case "screen-region":
         this.emit("screenRegion", { x: message.x, y: message.y, w: message.w, h: message.h, active: message.active });
