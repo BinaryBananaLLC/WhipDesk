@@ -60,6 +60,6 @@
     "punycode": "^2.3.1",
     "screenshot-desktop": "^1.15.1",
     "tsx": "^4.22.5",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }
