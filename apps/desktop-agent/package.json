@@ -1,6 +1,6 @@
 {
   "name": "whipdesk",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "description": "Open-source remote access for AI coding agents and dev machines, controlled from a phone.",
   "license": "AGPL-3.0",
