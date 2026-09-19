@@ -116,7 +116,7 @@ winget install BinaryBanana.WhipDesk
 scoop install whipdesk
 ```
 
-There's also a `-setup.exe` wizard on the [latest release](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest).
+Prefer a graphical installer? Download the Windows Setup installer from the [latest release](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest) and run it.
 
 #### Linux
 
