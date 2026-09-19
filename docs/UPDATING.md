@@ -48,7 +48,7 @@ startup and is shown in the controller's Connection dialog.
 | **Homebrew** (macOS) | `brew update && brew upgrade --cask whipdesk` |
 | **winget** (Windows) | `winget upgrade BinaryBanana.WhipDesk` |
 | **Scoop** (Windows) | `scoop update whipdesk` |
-| **Quick-install script** | Re-run it — it always fetches the latest signed release:<br>`curl -fsSL https://whipdesk.com/install.sh \| bash` (macOS/Linux)<br>`powershell -c "irm https://whipdesk.com/install.ps1 \| iex"` (Windows) |
+| **Quick-install script** (macOS/Linux) | Re-run it — it always fetches the latest signed release:<br>`curl -fsSL https://whipdesk.com/install.sh \| bash` |
 | **`.pkg` / `.exe` / `.zip` / `.tar.gz` download** | Download the latest from the [releases page](https://github.com/BinaryBananaLLC/WhipDesk/releases/latest) and install over the top (the `.pkg`/`.exe` installers handle replacement; for the portable `.zip`/`.tar.gz`, overwrite the old files). |
 | **Source checkout** (`npm run whipdesk` from a clone) | `git pull && npm install` |
 
@@ -57,7 +57,7 @@ phone reconnects with the same PIN and pairing.
 
 > **Verify a download before running it** — see
 > [VERIFYING-DOWNLOADS.md](VERIFYING-DOWNLOADS.md). Every release ships a `SHA256SUMS.txt`; the
-> install one-liners verify it for you, and macOS `.pkg`s are notarized.
+> macOS/Linux install one-liner verifies it for you, and macOS `.pkg`s are notarized.
 
 ## Releasing (maintainers)
 

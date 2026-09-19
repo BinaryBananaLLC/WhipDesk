@@ -63,12 +63,9 @@ const isUpdateArg = (a: string): boolean => UPDATE_ARGS.has(a.toLowerCase());
 const isUninstallArg = (a: string): boolean => UNINSTALL_ARGS.has(a.toLowerCase());
 const isVerboseArg = (a: string): boolean => a.toLowerCase() === "--verbose";
 
-/** The one-liner that re-installs (= updates) WhipDesk on the current OS. The installer replaces any
- *  older copy in place and repoints PATH, so "update" is just "run the installer again". */
+/** The macOS/Linux one-liner that re-installs (= updates) WhipDesk. */
 function updateCommand(): string {
-  return platform() === "win32"
-    ? 'powershell -c "irm https://whipdesk.com/install.ps1 | iex"'
-    : "curl -fsSL https://whipdesk.com/install.sh | bash";
+  return "curl -fsSL https://whipdesk.com/install.sh | bash";
 }
 
 /** Exact remove steps for the current OS. Uninstall is a CLEAN removal - it deletes the program AND
@@ -96,6 +93,14 @@ function uninstallSteps(): string[] {
 }
 
 function updateHelpLines(): string[] {
+  if (platform() === "win32") {
+    return [
+      "Updating:",
+      "  Installed with WinGet? Run: winget upgrade BinaryBanana.WhipDesk",
+      "  Installed with Scoop? Run: scoop update whipdesk",
+      "  Installed with npm? Run: npm install -g whipdesk@latest",
+    ];
+  }
   return [
     "Updating:",
     "  Re-run the installer - it replaces any older copy in place and keeps your settings:",

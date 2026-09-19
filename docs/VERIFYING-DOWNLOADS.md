@@ -5,9 +5,9 @@ Every release asset is built by GitHub Actions from the tagged commit and carrie
 None of this requires trusting a mirror or a hosted binary — the checks below tie the exact bytes you
 downloaded to the exact workflow run and commit that produced them.
 
-The one-liner installers (`https://whipdesk.com/install.sh`, `/install.ps1`) verify each download
-against the release's `SHA256SUMS.txt` automatically before installing; their canonical, auditable
-source lives in this repo at [`scripts/install/`](../scripts/install/).
+The macOS/Linux one-liner installer (`https://whipdesk.com/install.sh`) verifies each download
+against the release's `SHA256SUMS.txt` automatically before installing; its canonical, auditable
+source lives in this repo at [`scripts/install/install.sh`](../scripts/install/install.sh).
 
 ## 1. Build provenance (strongest — recommended)
 

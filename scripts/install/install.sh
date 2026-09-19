@@ -161,7 +161,7 @@ case "$METHOD" in
     elif [[ "$OS" == "Linux" ]]; then
       install_tar
     else
-      fail "unsupported OS: $OS (on Windows use: powershell -c \"irm https://whipdesk.com/install.ps1 | iex\")"
+      fail "unsupported OS: $OS (on Windows use: winget install BinaryBanana.WhipDesk)"
     fi
     ;;
   *) fail "unknown --method '$METHOD' (npm|brew|pkg|tar)" ;;
