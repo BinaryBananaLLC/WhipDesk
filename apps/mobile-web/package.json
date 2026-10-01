@@ -14,11 +14,11 @@
   },
   "dependencies": {
     "@whipdesk/protocol": "*",
-    "firebase": "^12.18.0"
+    "firebase": "^12.19.0"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "vite": "^8.2.2",
-    "tsx": "^4.23.12"
+    "vite": "^8.3.1",
+    "tsx": "^4.23.15"
   }
 }
