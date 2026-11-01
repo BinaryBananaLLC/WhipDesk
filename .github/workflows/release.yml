@@ -114,7 +114,7 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.tag }}
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -155,7 +155,7 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.tag }}
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -225,7 +225,7 @@ jobs:
       - name: Upload unsigned exe for signing
         if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
         id: unsigned
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-unsigned
           path: apps/desktop-agent/dist/stage/whipdesk.exe
@@ -233,7 +233,7 @@ jobs:
 
       - name: Submit SignPath signing request
         if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
-        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2.3
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORG_ID }}
@@ -276,7 +276,7 @@ jobs:
       - name: Upload unsigned installer for signing
         if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
         id: unsignedsetup
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-setup-unsigned
           path: dist-out/whipdesk-${{ needs.resolve.outputs.version }}-windows-x64-setup.exe
@@ -284,7 +284,7 @@ jobs:
 
       - name: Submit SignPath signing request (installer)
         if: matrix.os == 'windows-latest' && steps.signcfg.outputs.enabled == 'true'
-        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2.3
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORG_ID }}
@@ -308,7 +308,7 @@ jobs:
           cp -R apps/desktop-agent/dist/stage/. dist-pkg/whipdesk/
           tar -C dist-pkg -czf "dist-out/whipdesk-${{ needs.resolve.outputs.version }}-${{ matrix.target }}.tar.gz" whipdesk
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: assets-${{ matrix.target }}
           path: dist-out/*
@@ -319,7 +319,7 @@ jobs:
     needs: [resolve, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: staging
           pattern: assets-*
@@ -379,7 +379,7 @@ jobs:
       # Mint an installation token for a GitHub App that IS on the ruleset bypass list and push as it.
       - name: Mint GitHub App token (ruleset bypass actor)
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -390,7 +390,7 @@ jobs:
           # Persist the APP token as the push credential (not GITHUB_TOKEN) so the push is attributed
           # to the bypass-listed app and is allowed onto the protected branch.
           token: ${{ steps.app-token.outputs.token }}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Stamp version + regenerate version.ts + lockfile
@@ -420,7 +420,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.resolve.outputs.tag }}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: https://registry.npmjs.org
@@ -547,7 +547,7 @@ jobs:
 
       - name: Publish with winget-releaser
         if: steps.cfg.outputs.enabled == 'true'
-        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
+        uses: vedantmgoyal9/winget-releaser@b7370d4d152efdce803a26cc6ca9eee58cb2ad54 # v2
         with:
           identifier: BinaryBanana.WhipDesk
           release-tag: ${{ needs.resolve.outputs.tag }}
